@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# **vis-ffi** — lớp FFI của ViScript cho VisDroid: biên dịch thành `.so` (cdylib), app gọi qua
+# Dart FFI. Dùng lại nguyên pipeline của `vis-cli` (nạp module → hạ HIR → tyck → interp/VM)
+# thay vì viết lại, để ngữ nghĩa chạy trên app trùng khớp `vis run`.
+[package]
+name = "vis-ffi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "vis_ffi"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+vis-diag = { path = "../vis-diag" }
+vis-syntax = { path = "../vis-syntax" }
+vis-types = { path = "../vis-types" }
+vis-interp = { path = "../vis-interp" }
+vis-bytecode = { path = "../vis-bytecode" }
+vis-vm = { path = "../vis-vm" }
+vis-cli = { path = "../vis-cli" }
+serde_json = "1"
+
+[profile.release]
+opt-level = "s"
+lto = "thin"
+panic = "unwind"
+strip = true

@@ -1,0 +1,9 @@
+# Sinh tự động bởi build-so.sh — linker NDK cho từng ABI Android (API 25).
+[target.aarch64-linux-android]
+linker = "/home/z/my-project/work/tools/android-sdk/ndk/27.0.12077973/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android25-clang"
+
+[target.armv7-linux-androideabi]
+linker = "/home/z/my-project/work/tools/android-sdk/ndk/27.0.12077973/toolchains/llvm/prebuilt/linux-x86_64/bin/armv7a-linux-androideabi25-clang"
+
+[target.x86_64-linux-android]
+linker = "/home/z/my-project/work/tools/android-sdk/ndk/27.0.12077973/toolchains/llvm/prebuilt/linux-x86_64/bin/x86_64-linux-android25-clang"
