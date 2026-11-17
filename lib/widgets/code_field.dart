@@ -36,7 +36,11 @@ class GutterPainter extends CustomPainter {
     required this.color,
     required this.activeColor,
     required this.fontSize,
+    this.markers = const {},
   });
+
+  /// Dòng có chẩn đoán (0-based) → mã lỗi `VSxxxx`; vẽ chấm đỏ cạnh số dòng.
+  final Map<int, String> markers;
 
   final int lineCount;
   final double lineHeight;
@@ -52,6 +56,7 @@ class GutterPainter extends CustomPainter {
     final painter = TextPainter(textDirection: TextDirection.ltr);
     final first = (scrollOffset / lineHeight).floor().clamp(0, lineCount);
     final visible = (size.height / lineHeight).ceil() + 1;
+    final dot = Paint()..color = const Color(0xFFE11D48);
     for (var k = 0; k < visible; k++) {
       final line = first + k;
       if (line >= lineCount) break;
@@ -71,6 +76,13 @@ class GutterPainter extends CustomPainter {
       final y = topPad + line * lineHeight - scrollOffset;
       if (y + lineHeight < 0 || y > size.height + lineHeight) continue;
       painter.paint(canvas, Offset(size.width - painter.width, y));
+      if (markers.containsKey(line)) {
+        canvas.drawCircle(
+          Offset(4.5, y + lineHeight / 2 - 2),
+          3,
+          dot,
+        );
+      }
     }
   }
 
@@ -80,7 +92,8 @@ class GutterPainter extends CustomPainter {
       old.scrollOffset != scrollOffset ||
       old.cursorLine != cursorLine ||
       old.color != color ||
-      old.activeColor != activeColor;
+      old.activeColor != activeColor ||
+      old.markers != markers;
 }
 
 /// Editor chính.
@@ -92,6 +105,7 @@ class CodeField extends StatefulWidget {
     required this.colors,
     this.fontSize = 15,
     this.onModified,
+    this.markers = const {},
   });
 
   final CodeController controller;
@@ -102,11 +116,14 @@ class CodeField extends StatefulWidget {
   /// Gọi mỗi khi nội dung đổi (cho trạng thái "chưa lưu").
   final VoidCallback? onModified;
 
+  /// Dòng có chẩn đoán (0-based) — vẽ chấm đỏ ở gutter.
+  final Map<int, String> markers;
+
   @override
-  State<CodeField> createState() => _CodeFieldState();
+  State<CodeField> createState() => CodeFieldState();
 }
 
-class _CodeFieldState extends State<CodeField> {
+class CodeFieldState extends State<CodeField> {
   final ScrollController _scroll = ScrollController();
   String _prev = '';
 
@@ -162,6 +179,31 @@ class _CodeFieldState extends State<CodeField> {
     );
   }
 
+  /// Nhảy tới dòng (1-based): đặt con trỏ đầu dòng và cuộn để dòng nằm giữa màn hình.
+  void jumpToLine(int line) {
+    final text = widget.controller.text;
+    var off = 0;
+    var l = 1;
+    while (off < text.length && l < line) {
+      if (text.codeUnitAt(off) == 0x0A) l++;
+      off++;
+    }
+    widget.controller.value = TextEditingValue(
+      text: text,
+      selection: TextSelection.collapsed(offset: off.clamp(0, text.length)),
+    );
+    widget.focusNode.requestFocus();
+    if (_scroll.hasClients) {
+      final target =
+          (line - 1) * _lineHeight - _scroll.position.viewportDimension / 2;
+      _scroll.animateTo(
+        target.clamp(0.0, _scroll.position.maxScrollExtent),
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeOutCubic,
+      );
+    }
+  }
+
   /// Chèn văn bản tại vị trí con trỏ (thanh phím nhanh).
   void insert(String s) {
     final sel = widget.controller.selection;
@@ -210,6 +252,7 @@ class _CodeFieldState extends State<CodeField> {
             color: cs.onSurface.withValues(alpha: 0.35),
             activeColor: cs.primary,
             fontSize: fontSize * 0.85,
+            markers: widget.markers,
           ),
           child: const SizedBox(width: 46),
         );

@@ -8,6 +8,7 @@ import 'package:material_ui/material_ui.dart';
 import '../core/l10n.dart';
 import '../core/settings.dart';
 import '../core/vis_engine.dart';
+import 'cheatsheet_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key, required this.appState});
@@ -116,6 +117,42 @@ class _SettingsScreenState extends State<SettingsScreen> {
           subtitle: Text('vis run --no-extern', style: _mono(context)),
           value: app.noExtern,
           onChanged: (v) => app.setNoExtern(v),
+        ),
+        const SizedBox(height: 20),
+        _sectionTitle(context, t(context, S.editor)),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Row(
+            children: [
+              Expanded(child: Text(t(context, S.fontSize))),
+              Text(app.fontSize.toInt().toString(),
+                  style: _mono(context)),
+            ],
+          ),
+        ),
+        Slider(
+          value: app.fontSize,
+          min: 10,
+          max: 24,
+          divisions: 14,
+          label: app.fontSize.toInt().toString(),
+          onChanged: (v) => app.setFontSize(v),
+        ),
+        SwitchListTile(
+          title: Text(t(context, S.autoSave)),
+          value: app.autoSave,
+          onChanged: (v) => app.setAutoSave(v),
+        ),
+        ListTile(
+          leading: const Icon(Icons.menu_book_outlined),
+          title: Text(t(context, S.cheatSheet)),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => Navigator.push(
+            context,
+            MaterialPageRoute<void>(
+              builder: (_) => const CheatSheetScreen(),
+            ),
+          ),
         ),
         const SizedBox(height: 20),
         _sectionTitle(context, t(context, S.about)),

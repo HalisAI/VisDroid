@@ -16,6 +16,8 @@ class AppState extends ChangeNotifier {
     _strictCaps = _prefs.getBool('strictCaps') ?? false;
     _noExtern = _prefs.getBool('noExtern') ?? false;
     _lastFile = _prefs.getString('lastFile');
+    _fontSize = _prefs.getDouble('fontSize') ?? 15.0;
+    _autoSave = _prefs.getBool('autoSave') ?? true;
   }
 
   final SharedPreferences _prefs;
@@ -25,6 +27,8 @@ class AppState extends ChangeNotifier {
   bool _strictCaps = false;
   bool _noExtern = false;
   String? _lastFile;
+  double _fontSize = 15.0;
+  bool _autoSave = true;
 
   ThemeMode get themeMode => _themeMode;
   AppLang get lang => _lang;
@@ -32,6 +36,8 @@ class AppState extends ChangeNotifier {
   bool get strictCaps => _strictCaps;
   bool get noExtern => _noExtern;
   String? get lastFile => _lastFile;
+  double get fontSize => _fontSize;
+  bool get autoSave => _autoSave;
 
   void setThemeMode(ThemeMode m) {
     _themeMode = m;
@@ -60,6 +66,18 @@ class AppState extends ChangeNotifier {
   void setNoExtern(bool v) {
     _noExtern = v;
     _prefs.setBool('noExtern', v);
+    notifyListeners();
+  }
+
+  void setFontSize(double v) {
+    _fontSize = v;
+    _prefs.setDouble('fontSize', v);
+    notifyListeners();
+  }
+
+  void setAutoSave(bool v) {
+    _autoSave = v;
+    _prefs.setBool('autoSave', v);
     notifyListeners();
   }
 

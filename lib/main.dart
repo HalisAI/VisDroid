@@ -124,6 +124,9 @@ class _ShellState extends State<Shell> {
               strictCaps: widget.state.strictCaps,
               noExtern: widget.state.noExtern,
               onFileOpened: (name) => _lastFileName = name,
+              fontSize: widget.state.fontSize,
+              wordWrap: widget.state.wordWrap,
+              autoSave: widget.state.autoSave,
             ),
             FilesScreen(
               project: project,
