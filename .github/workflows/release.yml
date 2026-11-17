@@ -23,9 +23,7 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
+      # ubuntu-latest có sẵn Android SDK ($ANDROID_HOME) + sdkmanager.
       # NDK 27: engine đã biên dịch sẵn (jniLibs committed) nên chỉ cần cho
       # AGP strip native libs khi đóng gói.
       - name: Install NDK 27
