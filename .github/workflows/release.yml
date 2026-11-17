@@ -23,22 +23,7 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      # ubuntu-latest có sẵn Android SDK ($ANDROID_HOME) + sdkmanager.
-      # NDK 27: engine đã biên dịch sẵn (jniLibs committed) nên chỉ cần cho
-      # AGP strip native libs khi đóng gói.
-      - name: Install NDK 27
-        run: yes | sdkmanager --install "ndk;27.0.12077973" >/dev/null
-
-      - name: Set up Rust (Android targets)
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
-
-      - name: Cache Rust build
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: native/ViScript
-
+      # ubuntu-latest có sẵn Android SDK ($ANDROID_HOME).
       - name: Set up Flutter 3.50 (Dart 3.14)
         uses: subosito/flutter-action@v2
         with:
@@ -49,12 +34,11 @@ jobs:
       - name: Cache Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      # Biên dịch lại engine ViScript cho cả 3 ABI (ghim linker NDK vào
-      # .cargo/config.toml) rồi chép .so vào jniLibs.
-      - name: Build ViScript engine (.so)
-        env:
-          ANDROID_HOME: ${{ env.ANDROID_HOME }}
-        run: bash native/build-so.sh all
+      # Engine libvis_ffi.so đã biên dịch sẵn và committed trong jniLibs (3 ABI).
+      # AGP chỉ cần NDK cho bước strip native libs khi đóng gói — dùng stub tối
+      # thiểu (source.properties + llvm-strip no-op) thay vì tải 2GB toolchain.
+      - name: Prepare NDK 27 stub
+        run: bash scripts/make_ndk_stub.sh "$ANDROID_HOME/ndk/27.0.12077973" 27.0.12077973
 
       - name: Build APK
         run: flutter build apk --release
