@@ -1,0 +1,251 @@
+// SPDX-License-Identifier: MIT
+/// Bản dịch ứng dụng — tiếng Việt là ngôn ngữ mặc định; tiếng Anh chọn trong Cài đặt.
+/// Chuỗi giữ dạng map đơn giản (không cần codegen) vì số lượng chuỗi ít và cố định.
+library;
+
+import 'package:material_ui/material_ui.dart';
+
+enum AppLang { vietnamese, english }
+
+/// Mã chuỗi dùng trong toàn app.
+enum S {
+  appName,
+  tabEditor,
+  tabFiles,
+  tabSettings,
+  run,
+  running,
+  check,
+  clear,
+  save,
+  newFile,
+  openFile,
+  rename,
+  delete,
+  confirm,
+  cancel,
+  deleteConfirm,
+  newFileName,
+  renameFile,
+  fileNameHint,
+  emptyFileError,
+  output,
+  diagnostics,
+  noDiagnostics,
+  exitCode,
+  steps,
+  engineVersion,
+  theme,
+  themeSystem,
+  themeLight,
+  themeDark,
+  language,
+  langVietnamese,
+  langEnglish,
+  about,
+  aboutDesc,
+  examples,
+  unsavedChanges,
+  discard,
+  keep,
+  fileSaved,
+  fileCreated,
+  fileDeleted,
+  fileRenamed,
+  nameExists,
+  invalidName,
+  argsHint,
+  clearConsole,
+  copyOutput,
+  copied,
+  editor,
+  console,
+  line,
+  col,
+  errorShort,
+  okShort,
+  engineNotLoaded,
+  cantOpenEngine,
+  welcomeTitle,
+  welcomeBody,
+  openExample,
+  sampleFiles,
+  readOnlyExample,
+  useVmPath,
+  strictCaps,
+  noExtern,
+}
+
+const Map<S, String> _vi = {
+  S.appName: 'VisDroid',
+  S.tabEditor: 'Soạn thảo',
+  S.tabFiles: 'Tệp',
+  S.tabSettings: 'Cài đặt',
+  S.run: 'Chạy',
+  S.running: 'Đang chạy…',
+  S.check: 'Kiểm tra',
+  S.clear: 'Xoá',
+  S.save: 'Lưu',
+  S.newFile: 'Tệp mới',
+  S.openFile: 'Mở tệp',
+  S.rename: 'Đổi tên',
+  S.delete: 'Xoá',
+  S.confirm: 'Xác nhận',
+  S.cancel: 'Huỷ',
+  S.deleteConfirm: 'Xoá tệp này vĩnh viễn?',
+  S.newFileName: 'Tệp mới',
+  S.renameFile: 'Đổi tên tệp',
+  S.fileNameHint: 'tên-tệp.vis',
+  S.emptyFileError: 'Tên không được để trống',
+  S.output: 'Kết quả chạy',
+  S.diagnostics: 'Chẩn đoán',
+  S.noDiagnostics: 'Không có lỗi — chương trình sạch!',
+  S.exitCode: 'Mã thoát',
+  S.steps: 'Số bước',
+  S.engineVersion: 'Phiên bản engine',
+  S.theme: 'Chủ đề',
+  S.themeSystem: 'Theo hệ thống',
+  S.themeLight: 'Sáng',
+  S.themeDark: 'Tối',
+  S.language: 'Ngôn ngữ',
+  S.langVietnamese: 'Tiếng Việt',
+  S.langEnglish: 'English',
+  S.about: 'Giới thiệu',
+  S.aboutDesc:
+      'VisDroid — IDE ViScript cho Android, nhúng engine ViScript (.so) chạy '
+      'tức thì ngay trên máy. Viết bằng Dart/Flutter, engine biên dịch bằng Rust.',
+  S.examples: 'Ví dụ mẫu',
+  S.unsavedChanges: 'Có thay đổi chưa lưu',
+  S.discard: 'Bỏ',
+  S.keep: 'Lưu lại',
+  S.fileSaved: 'Đã lưu',
+  S.fileCreated: 'Đã tạo tệp',
+  S.fileDeleted: 'Đã xoá tệp',
+  S.fileRenamed: 'Đã đổi tên',
+  S.nameExists: 'Tên này đã có',
+  S.invalidName: 'Tên tệp không hợp lệ',
+  S.argsHint: 'Tham số cho main (cách nhau bằng dấu cách)',
+  S.clearConsole: 'Xoá bảng kết quả',
+  S.copyOutput: 'Copy kết quả',
+  S.copied: 'Đã copy',
+  S.editor: 'Editor',
+  S.console: 'Bảng chạy',
+  S.line: 'dòng',
+  S.col: 'cột',
+  S.errorShort: 'LỖI',
+  S.okShort: 'SẠCH',
+  S.engineNotLoaded: 'Engine chưa nạp được',
+  S.cantOpenEngine: 'Không mở được libvis_ffi.so',
+  S.welcomeTitle: 'Chào mừng đến VisDroid!',
+  S.welcomeBody:
+      'Viết ViScript rồi bấm nút ▶ để chạy ngay. Truy cập Tệp để tạo tệp mới '
+      'hoặc mở ví dụ mẫu.',
+  S.openExample: 'Mở ví dụ',
+  S.sampleFiles: 'Ví dụ đi kèm',
+  S.readOnlyExample: 'Bản sao sẽ lưu vào tệp của bạn',
+  S.useVmPath: 'Chạy qua VM (bytecode)',
+  S.strictCaps: 'Siết quyền cap',
+  S.noExtern: 'Tắt lệnh ngoài',
+};
+
+const Map<S, String> _en = {
+  S.appName: 'VisDroid',
+  S.tabEditor: 'Editor',
+  S.tabFiles: 'Files',
+  S.tabSettings: 'Settings',
+  S.run: 'Run',
+  S.running: 'Running…',
+  S.check: 'Check',
+  S.clear: 'Clear',
+  S.save: 'Save',
+  S.newFile: 'New file',
+  S.openFile: 'Open file',
+  S.rename: 'Rename',
+  S.delete: 'Delete',
+  S.confirm: 'Confirm',
+  S.cancel: 'Cancel',
+  S.deleteConfirm: 'Delete this file permanently?',
+  S.newFileName: 'New file',
+  S.renameFile: 'Rename file',
+  S.fileNameHint: 'file-name.vis',
+  S.emptyFileError: 'Name cannot be empty',
+  S.output: 'Run output',
+  S.diagnostics: 'Diagnostics',
+  S.noDiagnostics: 'No issues — clean run!',
+  S.exitCode: 'Exit code',
+  S.steps: 'Steps',
+  S.engineVersion: 'Engine version',
+  S.theme: 'Theme',
+  S.themeSystem: 'System',
+  S.themeLight: 'Light',
+  S.themeDark: 'Dark',
+  S.language: 'Language',
+  S.langVietnamese: 'Tiếng Việt',
+  S.langEnglish: 'English',
+  S.about: 'About',
+  S.aboutDesc:
+      'VisDroid — a ViScript IDE for Android with the ViScript engine (.so) '
+      'embedded, running scripts instantly on device. Built with Dart/Flutter, '
+      'engine compiled from Rust.',
+  S.examples: 'Examples',
+  S.unsavedChanges: 'Unsaved changes',
+  S.discard: 'Discard',
+  S.keep: 'Save',
+  S.fileSaved: 'Saved',
+  S.fileCreated: 'File created',
+  S.fileDeleted: 'File deleted',
+  S.fileRenamed: 'File renamed',
+  S.nameExists: 'Name already exists',
+  S.invalidName: 'Invalid file name',
+  S.argsHint: 'Arguments passed to main (space separated)',
+  S.clearConsole: 'Clear console',
+  S.copyOutput: 'Copy output',
+  S.copied: 'Copied',
+  S.editor: 'Editor',
+  S.console: 'Console',
+  S.line: 'line',
+  S.col: 'col',
+  S.errorShort: 'ERROR',
+  S.okShort: 'CLEAN',
+  S.engineNotLoaded: 'Engine not loaded',
+  S.cantOpenEngine: 'Cannot open libvis_ffi.so',
+  S.welcomeTitle: 'Welcome to VisDroid!',
+  S.welcomeBody:
+      'Write ViScript and tap the ▶ button to run instantly. Go to Files to '
+      'create a new file or open a bundled example.',
+  S.openExample: 'Open example',
+  S.sampleFiles: 'Bundled examples',
+  S.readOnlyExample: 'A copy will be saved into your files',
+  S.useVmPath: 'Run via VM (bytecode)',
+  S.strictCaps: 'Enforce cap permissions',
+  S.noExtern: 'Disable extern programs',
+};
+
+String t(BuildContext context, S key) {
+  final lang = AppLangScope.of(context);
+  return (lang == AppLang.vietnamese ? _vi : _en)[key] ?? key.name;
+}
+
+String tr(AppLang lang, S key) {
+  return (lang == AppLang.vietnamese ? _vi : _en)[key] ?? key.name;
+}
+
+/// Cung cấp ngôn ngữ hiện tại cho cây widget.
+class AppLangScope extends InheritedWidget {
+  const AppLangScope({
+    super.key,
+    required this.lang,
+    required super.child,
+  });
+
+  final AppLang lang;
+
+  static AppLang of(BuildContext context) {
+    final scope =
+        context.dependOnInheritedWidgetOfExactType<AppLangScope>();
+    return scope?.lang ?? AppLang.vietnamese;
+  }
+
+  @override
+  bool updateShouldNotify(AppLangScope oldWidget) => oldWidget.lang != lang;
+}
