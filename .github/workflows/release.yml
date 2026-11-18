@@ -29,7 +29,11 @@ jobs:
         with:
           flutter-version: 3.50.0
           channel: stable
-          cache: true
+
+      # Tải engine artifacts cho đúng variant release (libflutter.so ~8MB/ABI);
+      # không cache Flutter SDK — cache thiếu artifacts cho ra APK 500MB.
+      - name: Precache Android engine
+        run: flutter precache --android --no-ios
 
       - name: Cache Gradle
         uses: gradle/actions/setup-gradle@v4
