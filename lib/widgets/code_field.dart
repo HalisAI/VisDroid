@@ -75,7 +75,7 @@ class GutterPainter extends CustomPainter {
       painter.layout(maxWidth: size.width);
       final y = topPad + line * lineHeight - scrollOffset;
       if (y + lineHeight < 0 || y > size.height + lineHeight) continue;
-      painter.paint(canvas, Offset(size.width - painter.width, y));
+      painter.paint(canvas, Offset(size.width - 6 - painter.width, y));
       if (markers.containsKey(line)) {
         canvas.drawCircle(
           Offset(4.5, y + lineHeight / 2 - 2),
@@ -242,19 +242,37 @@ class CodeFieldState extends State<CodeField> {
     final gutter = AnimatedBuilder(
       animation: Listenable.merge([widget.controller, _scroll]),
       builder: (context, _) {
-        return CustomPaint(
-          painter: GutterPainter(
-            lineCount: widget.controller.text.split('\n').length,
-            lineHeight: _lineHeight,
-            topPad: 14,
-            scrollOffset: _scroll.hasClients ? _scroll.offset : 0,
-            cursorLine: _cursorLine,
-            color: cs.onSurface.withValues(alpha: 0.35),
-            activeColor: cs.primary,
-            fontSize: fontSize * 0.85,
-            markers: widget.markers,
+        // Rộng vừa đủ theo số chữ số của tổng số dòng — file ngắn thì cột
+        // số dòng thon gọn, không chiếm diện tích soạn thảo.
+        final lineCount = widget.controller.text.split('\n').length;
+        final digits = lineCount.toString().length;
+        final charW = fontSize * 0.85 * 0.62; // bước chữ monospace ~0.62em
+        final gutterW = (10 + digits * charW + 8).clamp(26.0, 64.0);
+        return Container(
+          width: gutterW,
+          decoration: BoxDecoration(
+            color: cs.surfaceContainerHighest.withValues(alpha: 0.4),
+            border: Border(
+              right: BorderSide(
+                color: cs.outlineVariant.withValues(alpha: 0.5),
+                width: 1,
+              ),
+            ),
           ),
-          child: const SizedBox(width: 46),
+          child: CustomPaint(
+            painter: GutterPainter(
+              lineCount: lineCount,
+              lineHeight: _lineHeight,
+              topPad: 14,
+              scrollOffset: _scroll.hasClients ? _scroll.offset : 0,
+              cursorLine: _cursorLine,
+              color: cs.onSurface.withValues(alpha: 0.35),
+              activeColor: cs.primary,
+              fontSize: fontSize * 0.85,
+              markers: widget.markers,
+            ),
+            child: SizedBox(width: gutterW),
+          ),
         );
       },
     );
@@ -285,22 +303,7 @@ class CodeFieldState extends State<CodeField> {
         Expanded(
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Container(
-                width: 50,
-                decoration: BoxDecoration(
-                  color: cs.surfaceContainerHighest.withValues(alpha: 0.4),
-                  border: Border(
-                    right: BorderSide(
-                      color: cs.outlineVariant.withValues(alpha: 0.5),
-                      width: 1,
-                    ),
-                  ),
-                ),
-                child: gutter,
-              ),
-              field,
-            ],
+            children: [gutter, field],
           ),
         ),
         _CodeBar(onKey: insert, colors: widget.colors),
@@ -344,7 +347,7 @@ class _CodeBar extends StatelessWidget {
       ),
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+        padding: const EdgeInsets.fromLTRB(6, 4, 12, 4),
         itemCount: keys.length,
         separatorBuilder: (_, _) => const SizedBox(width: 4),
         itemBuilder: (context, i) {

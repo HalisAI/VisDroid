@@ -510,11 +510,6 @@ class EditorScreenState extends State<EditorScreen> {
             ? null
             : [
                 IconButton(
-                  tooltip: t(context, S.save),
-                  icon: const Icon(Icons.save_outlined, size: 22),
-                  onPressed: _dirty ? save : null,
-                ),
-                IconButton(
                   tooltip: t(context, S.find),
                   icon: Icon(
                     _showFind ? Icons.search_off : Icons.search,
@@ -540,11 +535,17 @@ class EditorScreenState extends State<EditorScreen> {
                 PopupMenuButton<String>(
                   icon: const Icon(Icons.more_vert, size: 22),
                   onSelected: (v) async {
+                    if (v == 'save' && _dirty) await save();
                     if (v == 'goto') await _gotoLine();
                     if (v == 'stats') await _showStats();
                     if (v == 'args') await _editArgs();
                   },
                   itemBuilder: (ctx) => [
+                    PopupMenuItem(
+                      value: 'save',
+                      enabled: _dirty,
+                      child: Text(t(ctx, S.save)),
+                    ),
                     PopupMenuItem(value: 'goto', child: Text(t(ctx, S.goto))),
                     PopupMenuItem(value: 'stats', child: Text(t(ctx, S.stats))),
                     PopupMenuItem(
