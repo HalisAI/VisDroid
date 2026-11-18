@@ -43,6 +43,16 @@ pub(crate) const NO_FIELD: &vis_diag::Code = &TYPE_CODES[2];
 pub(crate) const MISMATCH: &vis_diag::Code = &TYPE_CODES[4];
 /// Mã `VS0301` — tên **kiểu** không tồn tại (ST-12; ST-11 không báo).
 pub(crate) const NO_TYPE: &vis_diag::Code = &NAME_CODES[0];
+/// Mã `VS0303` — **kiểu** không tồn tại (R9/VD-178: tách khỏi `VS0301` tên giá trị).
+pub(crate) const NO_TYPE_NAME: &vis_diag::Code = &NAME_CODES[2];
+/// Mã `VS0413` — gán vào ràng buộc bất biến (`let`/tham số) — R9 (VD-178).
+pub(crate) const GAN_BAT_BIEN: &vis_diag::Code = &TYPE_CODES[5];
+/// Mã `VS0414` — toán tử không hỗ trợ cho kiểu — R9 (VD-178).
+pub(crate) const TOAN_TU: &vis_diag::Code = &TYPE_CODES[6];
+/// Mã `VS0415` — `async` sai chỗ — R9 (VD-178).
+pub(crate) const ASYNC_SAI_CHO: &vis_diag::Code = &TYPE_CODES[7];
+/// Mã `VS0416` — range không `int` — R9 (VD-178).
+pub(crate) const RANGE_KHONG_INT: &vis_diag::Code = &TYPE_CODES[8];
 
 /// Kết quả một lượt kiểm kiểu.
 #[derive(Debug, Clone, Default)]
@@ -462,10 +472,22 @@ impl<'a> Checker<'a> {
         if self.same(from, to) {
             return true;
         }
-        if let Type::Opt(inner) = to {
-            if self.same(from, inner) {
-                return true; // tự nâng `T → T?` (§4.4)
-            }
+        // **R2 (VD-178)**: tự nâng **nhiều lớp** `T → T? → T??` (tĩnh-only, không đổi biểu diễn).
+        // Bóc `f` lớp `Opt` ở vế nguồn và `t` lớp ở đích; chấp nhận khi lõi khớp và `f ≤ t`.
+        let mut from_peel = from;
+        let mut from_layers = 0usize;
+        while let Type::Opt(inner) = from_peel {
+            from_layers += 1;
+            from_peel = inner;
+        }
+        let mut to_peel = to;
+        let mut to_layers = 0usize;
+        while let Type::Opt(inner) = to_peel {
+            to_layers += 1;
+            to_peel = inner;
+        }
+        if to_layers > 0 && self.same(from_peel, to_peel) && from_layers <= to_layers {
+            return true;
         }
         // ST-12b (BLOCKER #2): **không** nâng `int → float` đại trà — chỉ literal số nguyên
         // (§3.5). Việc nâng literal do `coerce_e` quyết định theo biểu thức nguồn.
@@ -476,6 +498,23 @@ impl<'a> Checker<'a> {
         );
         self.diag(MISMATCH, msg, span);
         false
+    }
+
+    /// **R17 (VD-178)**: điều kiện `if`/`while` chỉ `bool`; list/map/str ⇒ gợi ý `.is_empty()`.
+    pub(crate) fn coerce_cond(&mut self, e: &HExpr, t: &Type, what: &str) -> bool {
+        if matches!(t, Type::List(_) | Type::Map(..) | Type::Str) {
+            let ten = match e {
+                HExpr::Var { name, .. } => name.clone(),
+                _ => "xs".to_string(),
+            };
+            let msg = format!(
+                "{what}: cần `bool`, được `{}` — gợi ý: `{ten}.is_empty()`",
+                self.show(t)
+            );
+            self.diag(MISMATCH, msg, e.span());
+            return false;
+        }
+        self.coerce(t, &Type::Bool, e.span(), what)
     }
 
     /// Ép kiểu **có biết biểu thức nguồn**: chỉ nâng `int → float` khi nguồn là **literal** số
@@ -542,10 +581,7 @@ impl<'a> Checker<'a> {
             | Type::Enum(_) => ty.clone(),
             Type::Opt(inner) => {
                 let t = self.resolve_ann(inner, span);
-                if t.is_opt() {
-                    self.diag(MISMATCH, "optional không lồng (`T??`, §4.4)", span);
-                    return Type::Error;
-                }
+                // **R2 (VD-178)**: `T??` hợp lệ — optional lồng tuỳ ý (`Opt[Opt[T]]`).
                 Type::Opt(Box::new(t))
             }
             Type::List(t) => Type::List(Box::new(self.resolve_ann(t, span))),
@@ -657,14 +693,14 @@ impl<'a> Checker<'a> {
         // là `VS0301` nhưng thông điệp phải nói rõ "không có ở VS0 (vis-std/vòng 2)".
         let msg = if la_kieu_ngoai_vs0(name) {
             format!(
-                "kiểu `{name}` không có ở VS0 — thuộc vis-std/vòng 2; ở VS0 dùng kiểu khác hoặc bỏ chú thích"
+                "kiểu `{name}` chưa hỗ trợ — thuộc vis-std/vòng 2; dùng kiểu khác hoặc bỏ chú thích"
             )
         } else {
             format!(
-                "tên không tồn tại: kiểu `{name}` không có trong VS0 (VD-43) và không được khai trong tệp"
+                "tên không tồn tại: kiểu `{name}` chưa hỗ trợ (VD-43) và không được khai trong tệp"
             )
         };
-        self.diag(NO_TYPE, msg, span);
+        self.diag(NO_TYPE_NAME, msg, span);
         Type::Error
     }
 
@@ -787,6 +823,12 @@ impl<'a> Checker<'a> {
                     self.item_types.push((e.name.clone(), ty));
                 }
                 HItem::Alias(a) => {
+                    // **P0 (VD-170)**: `newtype` chưa hạ ⇒ báo **ngay dòng khai báo**, không im
+                    // lặng (trước P0: khai một mình xanh, dùng mới `VS0301` ở dòng dùng).
+                    // Chỉ ở tầng tyck ⇒ `vis check --syntax` (cổng tài liệu QD §7.4) vẫn xanh.
+                    // **R12a (VD-178)**: `type Email(str)` là cú pháp **mới** — không còn `VS0203`
+                    // (từ khoá `newtype` bị parser chặn). Newtype **trong suốt**: kiểu = kiểu trong.
+                    let _ = a.is_newtype;
                     let ty = self.resolve_ann(&a.ty, a.span);
                     self.set_ty(a.sym, ty.clone());
                     self.item_types.push((a.name.clone(), ty));
@@ -818,7 +860,7 @@ impl<'a> Checker<'a> {
                 // **ST-60 (VD-95 (4))**: `async` chỉ cho hàm cấp tệp — method/`cmd` ⇒ `VS0412` (nợ R10).
                 if f.is_async && f.kind != crate::hir::FnKind::Fn {
                     self.diag(
-                        MISMATCH,
+                        ASYNC_SAI_CHO,
                         "`async` chỉ cho hàm cấp tệp (`async fn`) — method/`cmd` chưa hỗ trợ (nợ R10)",
                         f.span,
                     );
@@ -882,17 +924,51 @@ impl<'a> Checker<'a> {
     /// Kiểm một câu lệnh; trả "kiểu giá trị" (chỉ `HStmt::Expr` có giá trị).
     pub(crate) fn kiem_stmt(&mut self, s: &HStmt) -> Type {
         match s {
-            HStmt::Let { pat, ty, init, .. } => {
+            HStmt::Let {
+                pat,
+                ty,
+                init,
+                else_,
+                ..
+            } => {
                 let got = self.kiem_expr(init);
+                // **R3b (VD-178)**: `let x = r else:` — bóc `Result[T, E]`/`T?` cho ràng buộc;
+                // khối `else` nhận lỗi (`E`) hoặc không có ràng buộc (`T?`).
+                let (declared, loi) = match else_ {
+                    Some(_) => match &got {
+                        Type::Result(t, e) => ((**t).clone(), Some((**e).clone())),
+                        Type::Opt(t) => ((**t).clone(), None),
+                        Type::Error => (Type::Error, None),
+                        other => {
+                            let o = other.clone();
+                            self.diag(
+                                MISMATCH,
+                                format!(
+                                    "`let … else` cần `Result[T, E]` hoặc `T?`, được `{}`",
+                                    self.show(&o)
+                                ),
+                                init.span(),
+                            );
+                            (Type::Error, None)
+                        }
+                    },
+                    None => (got, None),
+                };
                 let declared = match ty {
                     Some(ann) => {
                         let ann = self.resolve_ann(ann, init.span());
-                        self.coerce_e(init, &got, &ann, "khai báo `let`");
+                        self.coerce_e(init, &declared, &ann, "khai báo `let`");
                         ann
                     }
-                    None => got,
+                    None => declared,
                 };
                 self.bind_pat(pat, &declared);
+                if let Some(e) = else_ {
+                    if let Some(sym) = e.bind_sym {
+                        self.set_ty(sym, loi.unwrap_or(Type::Unit));
+                    }
+                    self.kiem_than_bo(&e.body);
+                }
                 Type::Unit
             }
             HStmt::Var {
@@ -938,11 +1014,24 @@ impl<'a> Checker<'a> {
                             crate::hir::AssignOp::Sub => crate::hir::BinOp::Sub,
                             crate::hir::AssignOp::Mul => crate::hir::BinOp::Mul,
                             crate::hir::AssignOp::Div => crate::hir::BinOp::Div,
+                            // **R7-fix (VD-178)**: `//=` kiểm như `//` (trước đây rơi vào `%`).
+                            crate::hir::AssignOp::FloorDiv => crate::hir::BinOp::FloorDiv,
                             _ => crate::hir::BinOp::Rem,
                         };
                         let v_lit = is_int_lit(value);
                         if let Some(res) = num::so_hoc(op2, &wanted, &got, false, v_lit) {
                             self.coerce(&res, &wanted, value.span(), "gán ghép");
+                        } else if op2 == crate::hir::BinOp::FloorDiv {
+                            // **R7-fix (VD-178)**: `//=` chỉ có cho `int` — kiểu khác ⇒ `VS0414`.
+                            self.diag(
+                                TOAN_TU,
+                                format!(
+                                    "`//=` không hỗ trợ cho `{}` và `{}` (chỉ `int`)",
+                                    self.show(&wanted),
+                                    self.show(&got)
+                                ),
+                                value.span(),
+                            );
                         } else {
                             self.coerce_e(value, &got, &wanted, "gán ghép");
                         }
@@ -988,7 +1077,7 @@ impl<'a> Checker<'a> {
             }
             HStmt::While { cond, body, .. } => {
                 let t = self.kiem_expr(cond);
-                self.coerce(&t, &Type::Bool, cond.span(), "điều kiện `while`");
+                self.coerce_cond(cond, &t, "điều kiện `while`");
                 self.kiem_than_bo(body);
                 Type::Unit
             }
@@ -1072,9 +1161,9 @@ impl<'a> Checker<'a> {
                     Some(other) => {
                         let o = other.clone();
                         self.diag(
-                            MISMATCH,
+                            RANGE_KHONG_INT,
                             format!(
-                                "`for` chỉ duyệt được range `int` ở VS0, được `{}` (§A.7)",
+                                "`for` chỉ duyệt được range `int`, được `{}` (§A.7)",
                                 self.show(&o)
                             ),
                             span,
@@ -1108,7 +1197,7 @@ impl<'a> Checker<'a> {
                     let kind = self.symbols.get(*id).map(|s| s.kind);
                     if !matches!(kind, Some(SymKind::Var)) {
                         self.diag(
-                            MISMATCH,
+                            GAN_BAT_BIEN,
                             "không gán được cho `let`/tham số (chỉ `var` mới gán được, §4.1)",
                             *span,
                         );
@@ -1145,7 +1234,7 @@ impl<'a> Checker<'a> {
                 if !matches!(op, crate::hir::AssignOp::Set) {
                     self.diag(
                         MISMATCH,
-                        "chỉ gán được `=` cho trường/phần tử ở VS0 (gán ghép `+=` … trên trường chưa hỗ trợ, §4.1)",
+                        "chỉ gán được `=` cho trường/phần tử (gán ghép `+=` … trên trường chưa hỗ trợ, §4.1)",
                         *span,
                     );
                     return Type::Error;
@@ -1169,7 +1258,7 @@ impl<'a> Checker<'a> {
                             self.diag(
                                 MISMATCH,
                                 format!(
-                                    "không gán được trường của `{}` ở VS0 (§4.1)",
+                                    "không gán được trường của `{}` (§4.1)",
                                     self.types.show(other)
                                 ),
                                 *span,
@@ -1200,7 +1289,7 @@ impl<'a> Checker<'a> {
                         self.diag(
                             MISMATCH,
                             format!(
-                                "không gán được trường của `{}` ở VS0 (§4.1)",
+                                "không gán được trường của `{}` (§4.1)",
                                 self.types.show(other)
                             ),
                             *span,
@@ -1215,7 +1304,7 @@ impl<'a> Checker<'a> {
                 if !matches!(op, crate::hir::AssignOp::Set) {
                     self.diag(
                         MISMATCH,
-                        "chỉ gán được `=` cho trường/phần tử ở VS0 (gán ghép `+=` … trên phần tử chưa hỗ trợ, §4.1)",
+                        "chỉ gán được `=` cho trường/phần tử (gán ghép `+=` … trên phần tử chưa hỗ trợ, §4.1)",
                         *span,
                     );
                     return Type::Error;
@@ -1234,7 +1323,7 @@ impl<'a> Checker<'a> {
                     return Type::Error;
                 }
                 if !mutable {
-                    self.diag(MISMATCH, GAN_PHAN_TU_LET, *span);
+                    self.diag(GAN_BAT_BIEN, GAN_PHAN_TU_LET, *span);
                     return Type::Error;
                 }
                 let _ = self.kiem_expr(base); // vẫn kiểm chẩn đoán của biểu thức gốc
@@ -1286,7 +1375,7 @@ impl<'a> Checker<'a> {
                         HExpr::Var { sym: Some(id), .. } => {
                             if !duoc_gan.contains(id) {
                                 self.diag(
-                                    MISMATCH,
+                                    GAN_BAT_BIEN,
                                     "không gán được cho `let`/tham số (chỉ `var` mới gán được, §4.1)",
                                     *span,
                                 );
@@ -1299,10 +1388,10 @@ impl<'a> Checker<'a> {
                                 if goc_la_var(target) {
                                     self.diag(MISMATCH, GAN_LONG, *span);
                                 } else {
-                                    self.diag(MISMATCH, GAN_TRUONG_LET, *span);
+                                    self.diag(GAN_BAT_BIEN, GAN_TRUONG_LET, *span);
                                 }
                             } else if !goc_la_var(target) {
-                                self.diag(MISMATCH, GAN_TRUONG_LET, *span);
+                                self.diag(GAN_BAT_BIEN, GAN_TRUONG_LET, *span);
                             }
                         }
                         HExpr::Index { .. } => {
@@ -1312,10 +1401,10 @@ impl<'a> Checker<'a> {
                                 if goc_la_var(target) {
                                     self.diag(MISMATCH, GAN_LONG, *span);
                                 } else {
-                                    self.diag(MISMATCH, GAN_PHAN_TU_LET, *span);
+                                    self.diag(GAN_BAT_BIEN, GAN_PHAN_TU_LET, *span);
                                 }
                             } else if !goc_la_var(target) {
-                                self.diag(MISMATCH, GAN_PHAN_TU_LET, *span);
+                                self.diag(GAN_BAT_BIEN, GAN_PHAN_TU_LET, *span);
                             }
                         }
                         _ => {}
@@ -1350,7 +1439,7 @@ impl<'a> Checker<'a> {
 
 /// **ST-56b (VD-97)**: thông điệp gán ghép trên trường/phần tử (dùng chung cho thân `impl`).
 const GAN_GHEP: &str =
-    "chỉ gán được `=` cho trường/phần tử ở VS0 (gán ghép `+=` … trên trường chưa hỗ trợ, §4.1)";
+    "chỉ gán được `=` cho trường/phần tử (gán ghép `+=` … trên trường chưa hỗ trợ, §4.1)";
 /// Thông điệp gán **trường** của `let`/tham số.
 const GAN_TRUONG_LET: &str =
     "không gán được trường của `let`/tham số — chỉ `var` mới gán được (§4.1)";
@@ -1359,7 +1448,7 @@ const GAN_PHAN_TU_LET: &str = "chỉ gán được phần tử của `var` — `
 /// **ST-60b**: đích **lồng** (sâu hơn một tầng trường/chỉ số) — gốc **đã** là `var` nên lỗi là do
 /// **hình dạng đích**, không phải do bất biến; nêu đúng vậy thay vì báo oan "let/tham số".
 const GAN_LONG: &str =
-    "gán **lồng** (`x.f[i]`/`x[i][j]`/`x.f.g`) chưa hỗ trợ ở VS0 — gán lại cả biến `var` bằng `with`/giá trị mới (§4.1)";
+    "gán **lồng** (`x.f[i]`/`x[i][j]`/`x.f.g`) chưa hỗ trợ — gán lại cả biến `var` bằng `with`/giá trị mới (§4.1)";
 
 /// **ST-60b**: gốc của **đích gán** — đi xuống qua `Field`/`Index` tới `Var`.
 fn goc_dich(t: &HExpr) -> Option<u32> {

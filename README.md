@@ -60,6 +60,8 @@ assets/examples/        Ví dụ `.vis` đi kèm app
 
 ViScript là ngôn ngữ lập trình dễ học cho người Việt — cú pháp gọn như Python, kiểm tra kiểu như Rust: [vifast-oss/ViScript](https://github.com/vifast-oss/ViScript). Thư mục `native/ViScript` giữ fork với crate mới `vis-ffi` (hàm `visd_run` / `visd_check` / `visd_version`) và `vis-cli` tách phần thư viện để app dùng lại **nguyên** pipeline của `vis run` — cùng bảng chẩn đoán, cùng ngữ nghĩa quyền `cap`, cùng host fs/net.
 
+**Đồng bộ engine tự động (CD):** workflow `Sync ViScript` chạy hằng ngày (02:23 UTC) hoặc bấm thủ công — pull upstream mới về `native/ViScript`, giữ nguyên 3 lớp vá của VisDroid (crate `vis-ffi`, tách `lib.rs` trong vis-cli, nới `pub(crate)`→`pub`), gate `cargo check` trước khi commit, rồi tạo prerelease `engine-<sha>` để CI build lại `libvis_ffi.so` + APK đính kèm. Chạy tay trên máy: `bash scripts/sync-viscript.sh`. Workflow build APK giờ cũng biên dịch `.so` từ nguồn (Rust + NDK) thay vì chỉ dùng .so đã commit.
+
 License engine: MIT OR Apache-2.0 (giữ nguyên SPDX trong `native/ViScript`).
 
 ## Releases (GitHub Action)

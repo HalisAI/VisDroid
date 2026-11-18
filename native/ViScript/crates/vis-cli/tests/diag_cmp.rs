@@ -33,10 +33,26 @@ use std::process::Command;
 /// async; VS0201: `async` trong `impl`) + 2 ca lỗi **lúc chạy** (`VS0506` ×2: thân tác vụ lỗi ở
 /// `await` và ở join cuối).
 // **SỬA KÈM LÝ DO (ST-72)**: 441 → **447** (+6 ca `cap/`: 3 xanh, 3 lỗi biên dịch).
-const TONG: usize = 447;
-const XANH: usize = 364;
-const LOI_BIEN_DICH: usize = 49;
-const LOI_LUC_CHAY: usize = 34;
+// **SỬA KÈM LÝ DO (R9, VD-178)**: 447 → **448** (+1 ca `loi/range-khong-int` VS0416, lỗi biên dịch).
+// **SỬA KÈM LÝ DO (R6, VD-178)**: 448 → **452** (+4 ca `chuoi/` xanh).
+// **SỬA KÈM LÝ DO (R17, VD-178)**: 452 → **453** (+`dieu-khien/is-empty` xanh).
+// **SỬA KÈM LÝ DO (R3b, VD-178)**: 453 → **454** (+`result/let-else` xanh).
+// **SỬA KÈM LÝ DO (R3a, VD-178)**: 454 → **455** (+`result/if-let-pattern` xanh).
+// **SỬA KÈM LÝ DO (R16, VD-178)**: 455 → **456** (+`pham-vi/che-ten-let` xanh).
+// **SỬA KÈM LÝ DO (R12a, VD-178)**: 456 → **457** (+`kieu/type-alias-newtype` xanh).
+// **SỬA KÈM LÝ DO (R11, VD-178)**: 457 → **458** (+`enum/vi-tri-va-dung-ten` xanh).
+// **SỬA KÈM LÝ DO (R7, VD-178)**: 458 → **459** (+`so-hoc/chia-nguyen` xanh).
+// **SỬA KÈM LÝ DO (R8, VD-178)**: 459 → **460** (+`list/chi-so-an-toan` xanh).
+// **SỬA KÈM LÝ DO (R5a, VD-178)**: 460 → **461** (+`ham/goi-ten` xanh).
+// **SỬA KÈM LÝ DO (R5c, VD-178)**: 461 → **462** (+`chuoi-phuong-thuc/std-method` xanh).
+// **SỬA KÈM LÝ DO (R20a, VD-178)**: 462 → **463** (+`assert/thong-diep` xanh).
+// **SỬA KÈM LÝ DO (R20b, VD-178)**: 463 → **464** (+`list/duyet-nang-cao` xanh).
+// **SỬA KÈM LÝ DO (R19b, VD-178)**: 464 → **465** (+`loi/doi-dau-tran` — lỗi **lúc chạy** VS0507).
+// **SỬA KÈM LÝ DO (R2, VD-178)**: 465 → **469** (+3 xanh `optional/` + `loi/none-bo` — lỗi **biên dịch** VS0203).
+const TONG: usize = 469;
+const XANH: usize = 383;
+const LOI_BIEN_DICH: usize = 51;
+const LOI_LUC_CHAY: usize = 35;
 /// **SỬA KÈM LÝ DO (ST-89)**: VM **đã có host `Ngoai`** ⇒ **0** ca xanh cần host bị `VS0604`.
 const XANH_CAN_HOST: usize = 0;
 /// **SỬA KÈM LÝ DO (ST-89)**: 3 → **0** — VM có host `Ngoai`, cả 3 ca lỗi-chạy cần host nay so

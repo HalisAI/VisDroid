@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //! Pattern: gán kiểu cho binding + **xét hết** `match` (`VS0402`, VD-43 #5).
 //!
-//! Luật xét hết: enum ⇒ **mọi** biến thể; `bool` ⇒ `true`/`false`; `T?` ⇒ `some`/`none`
+//! Luật xét hết: enum ⇒ **mọi** biến thể; `bool` ⇒ `true`/`false`; `T?` ⇒ `Some`/`None`
 //! (`Some`/`None` cũng được); `Result` ⇒ `ok`/`err`; bản ghi ⇒ **đủ mọi trường, không `..`**;
 //! kiểu vô hạn (`int`, `str`, `list`, `map`, …) ⇒ **bắt buộc `_`**; **guard không tính**;
 //! or-pattern tính **cả hai** vế.
@@ -94,7 +94,6 @@ impl<'a> Checker<'a> {
             }
             HPat::Ctor { path, args, span } => {
                 let name = path.last().cloned().unwrap_or_default();
-                let low = name.to_ascii_lowercase();
                 match subj {
                     Type::Error => {
                         for a in args {
@@ -111,24 +110,48 @@ impl<'a> Checker<'a> {
                                 self.kiem_ctor_args(&v.fields, args, *span, &name);
                             }
                             None => {
+                                // **VD-212 (A0)**: biến thể viết sai hoa thường ⇒ gợi ý dạng đúng
+                                // (`circle` ⇒ `Circle`); enum người dùng cũng vậy (hai biến thể
+                                // `A`/`a` phải khớp đúng từng biến thể).
+                                let sai_case = def.as_ref().and_then(|d| {
+                                    d.variants
+                                        .iter()
+                                        .find(|v| v.name.eq_ignore_ascii_case(&name))
+                                        .cloned()
+                                });
                                 let ename = def.map(|d| d.name).unwrap_or_default();
-                                self.diag(
-                                    NO_FIELD,
-                                    format!("enum `{ename}` không có biến thể `{name}`"),
-                                    *span,
-                                );
-                                for a in args {
-                                    self.bind_pat(a, &Type::Error);
+                                match sai_case {
+                                    Some(v) => {
+                                        self.diag(
+                                            &vis_diag::SYNTAX_CODES[2],
+                                            format!(
+                                                "`{name}` viết sai hoa thường — biến thể là `{}`",
+                                                v.name
+                                            ),
+                                            *span,
+                                        );
+                                        self.kiem_ctor_args(&v.fields, args, *span, &v.name);
+                                    }
+                                    None => {
+                                        self.diag(
+                                            NO_FIELD,
+                                            format!("enum `{ename}` không có biến thể `{name}`"),
+                                            *span,
+                                        );
+                                        for a in args {
+                                            self.bind_pat(a, &Type::Error);
+                                        }
+                                    }
                                 }
                             }
                         }
                     }
-                    Type::Opt(inner) => match low.as_str() {
-                        "some" => {
+                    Type::Opt(inner) => match name.as_str() {
+                        "Some" => {
                             if args.len() != 1 {
                                 self.diag(
                                     ARG_COUNT,
-                                    format!("`some` cần 1 đối số, được {}", args.len()),
+                                    format!("`Some` cần 1 đối số, được {}", args.len()),
                                     *span,
                                 );
                             }
@@ -137,55 +160,103 @@ impl<'a> Checker<'a> {
                                 self.bind_pat(a, &t);
                             }
                         }
-                        "none" => {
+                        "None" => {
                             if !args.is_empty() {
                                 self.diag(
                                     ARG_COUNT,
-                                    format!("`none` không có đối số, được {}", args.len()),
+                                    format!("`None` không có đối số, được {}", args.len()),
                                     *span,
                                 );
                             }
                         }
-                        _ => {
-                            self.diag(
-                                NO_FIELD,
-                                format!("`{}` chỉ có `some`/`none`", self.show(subj)),
-                                *span,
-                            );
+                        other => {
+                            // **VD-212 (A0)**: sai hoa thường (`some`/`none`) — hạ đã báo `VS0203`
+                            // (lower/pat.rs) nên ở đây chỉ bind đúng kiểu, không báo trùng.
+                            let cap = cap_dau(other);
+                            if cap == "Some" || cap == "None" {
+                                let t = (**inner).clone();
+                                if cap == "Some" {
+                                    if args.len() != 1 {
+                                        self.diag(
+                                            ARG_COUNT,
+                                            format!("`Some` cần 1 đối số, được {}", args.len()),
+                                            *span,
+                                        );
+                                    }
+                                    for a in args {
+                                        self.bind_pat(a, &t);
+                                    }
+                                } else if !args.is_empty() {
+                                    self.diag(
+                                        ARG_COUNT,
+                                        format!("`None` không có đối số, được {}", args.len()),
+                                        *span,
+                                    );
+                                }
+                            } else {
+                                self.diag(
+                                    NO_FIELD,
+                                    format!("`{}` chỉ có `Some`/`None`", self.show(subj)),
+                                    *span,
+                                );
+                                for a in args {
+                                    self.bind_pat(a, &Type::Error);
+                                }
+                            }
                         }
                     },
-                    Type::Result(a, b) => match low.as_str() {
-                        "ok" => {
+                    Type::Result(a, b) => match name.as_str() {
+                        "Ok" => {
                             let t = (**a).clone();
                             if args.len() != 1 {
-                                self.diag(ARG_COUNT, "`ok` cần 1 đối số", *span);
+                                self.diag(ARG_COUNT, "`Ok` cần 1 đối số", *span);
                             }
                             for x in args {
                                 self.bind_pat(x, &t);
                             }
                         }
-                        "err" => {
+                        "Err" => {
                             let t = (**b).clone();
                             if args.len() != 1 {
-                                self.diag(ARG_COUNT, "`err` cần 1 đối số", *span);
+                                self.diag(ARG_COUNT, "`Err` cần 1 đối số", *span);
                             }
                             for x in args {
                                 self.bind_pat(x, &t);
                             }
                         }
-                        _ => {
-                            self.diag(
-                                NO_FIELD,
-                                format!("`{}` chỉ có `ok`/`err`", self.show(subj)),
-                                *span,
-                            );
+                        other => {
+                            // **VD-212 (A0)**: sai hoa thường — hạ đã báo `VS0203` (lower/pat.rs);
+                            // chỉ bind đúng kiểu, không báo trùng.
+                            let cap = cap_dau(other);
+                            if cap == "Ok" || cap == "Err" {
+                                let t = if cap == "Ok" {
+                                    (**a).clone()
+                                } else {
+                                    (**b).clone()
+                                };
+                                if args.len() != 1 {
+                                    self.diag(ARG_COUNT, format!("`{cap}` cần 1 đối số"), *span);
+                                }
+                                for x in args {
+                                    self.bind_pat(x, &t);
+                                }
+                            } else {
+                                self.diag(
+                                    NO_FIELD,
+                                    format!("`{}` chỉ có `Ok`/`Err`", self.show(subj)),
+                                    *span,
+                                );
+                                for x in args {
+                                    self.bind_pat(x, &Type::Error);
+                                }
+                            }
                         }
                     },
                     other => {
                         self.diag(
                             MISMATCH,
                             format!(
-                                "pattern ctor `{name}` không khớp kiểu `{}`",
+                                "pattern ctor `{name}` không khớp kiểu `{}` — gợi ý: `let`/gán bóc giá trị cần khớp **luôn**; dùng `match` hoặc `if let` khi pattern có thể không khớp",
                                 self.show(other)
                             ),
                             *span,
@@ -268,11 +339,22 @@ impl<'a> Checker<'a> {
                     ctor_names(p, &mut cov);
                 }
                 let need: &[&str] = match subj {
+                    // `ctor_names` so khớp **thường**; thông điệp in **hoa** chữ đầu (UpperCamel).
                     Type::Opt(_) => &["some", "none"],
                     _ => &["ok", "err"],
                 };
-                let missing: Vec<&str> =
-                    need.iter().copied().filter(|n| !cov.contains(*n)).collect();
+                let hoa = |n: &str| -> String {
+                    let mut c = n.chars();
+                    match c.next() {
+                        Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+                        None => n.to_string(),
+                    }
+                };
+                let missing: Vec<String> = need
+                    .iter()
+                    .filter(|n| !cov.contains(**n))
+                    .map(|n| hoa(n))
+                    .collect();
                 if !missing.is_empty() {
                     self.diag(
                         NON_EXHAUSTIVE,
@@ -374,6 +456,17 @@ fn phu_tat_ca(p: &HPat) -> bool {
         HPat::Wild { .. } | HPat::Bind { .. } => true,
         HPat::Or { alts, .. } => alts.iter().any(phu_tat_ca),
         _ => false,
+    }
+}
+
+/// **VD-212 (A0)**: viết thường chữ cái đầu (`SOME` ⇒ `Some`) — dùng để nhận ra biến thể viết sai
+/// hoa thường và gợi ý dạng đúng. Giữ nguyên phần còn lại (không `title case`).
+fn cap_dau(s: &str) -> String {
+    let low = s.to_ascii_lowercase();
+    let mut it = low.chars();
+    match it.next() {
+        Some(f) => f.to_uppercase().collect::<String>() + it.as_str(),
+        None => low,
     }
 }
 

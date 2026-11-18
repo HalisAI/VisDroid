@@ -16,7 +16,7 @@ Bản này đã vá theo [`docs/QUYET-DINH-sau-review.md`](../QUYET-DINH-sau-rev
 | 2 | Từ vựng: NFC toàn tệp trước khi lex; thụt lề suy đơn vị; tab = `VS0107` nhưng **vẫn lex**; bảng literal mới; bỏ `50%` → `50pct`; escape/nội suy; cột theo Unicode scalar | 2.1–2.4, 3.5 |
 | 3 | Parse chế độ lệnh **hai pha**: `vis-syntax` → `CmdCST` → `cmd_lower` (trong `vis-types`) → HIR; "cùng AST" đổi thành "cùng **HIR**" | 9.1, 9.3, 14.1, 18.2 |
 | 4 | Ngữ nghĩa số: bảng đầy đủ `%`, `**`, bit, float/NaN, `size/duration/percent`; **bảng ưu tiên 12 mức** | 3.6, 4.5 |
-| 5 | Kiểu và optional: thêm `Future[T]`, `Task[T]`, `AnyError`; bỏ `s[i]`; tự nâng `T → T?`; pattern `none/some/ok/err` | 3, 4.3–4.4 |
+| 5 | Kiểu và optional: thêm `Future[T]`, `Task[T]`, `AnyError`; bỏ `s[i]`; tự nâng `T → T?`; pattern `Some/None/Ok/Err` | 3, 4.3–4.4 |
 | 6 | Lỗi: `trait Error: Show`, `AnyError`, `?` tự chuyển; **bảng mã thoát**; panic payload + arena lệnh | 6 |
 | 7 | Chế độ lệnh: metachar, `$env.NAME`, `;`/`&`/`--`/`-5`, closure-arg, `shell_item`, `from json[T]`, `complete` | 9 |
 | 8 | Host/ViShell: proc suspend/resume/cancel + wait; shell sở hữu tty, con nhận pipe, pty để sau | 12, 15 |
@@ -115,7 +115,7 @@ Phụ lục B. Chương trình mẫu
 - Phần mở rộng `.vis` (script), `.vish` (tệp ở chế độ lệnh, xem 9.1). UTF-8 bắt buộc. Dòng đầu tuỳ chọn `#!/usr/bin/env vis`.
 - **Chuẩn hoá NFC trước khi lex** (QD §7.1): **toàn bộ** tệp nguồn được chuẩn hoá Unicode NFC **trước** khi lex. Hệ quả: định danh, literal `str`/`char` và **cột chẩn đoán** đều tính trên dạng NFC; `'ố'` gõ dạng tổ hợp hay dựng sẵn đều là **một** Unicode scalar và là một literal `char` hợp lệ; `số_lượng` viết dạng tổ hợp (NFD) và dạng dựng sẵn (NFC) là **cùng một** tên. `vis fmt` ghi ra NFC. Vị trí báo lỗi vẫn trỏ được về tệp gốc vì cả lexer và editor cùng chuẩn hoá một cách tất định.
 - **Từ khoá tiếng Anh** (giống Python, Rust, JS/TS). Danh sách:
-  `let var const fn cmd type enum trait impl alias newtype pub use if elif else match for in while loop break continue return and or not true false none self async await scope test extern derives with has dyn ref`
+  `let var const fn cmd type enum trait impl alias newtype pub use if elif else match for in while loop break continue return and or not true false self async await scope test extern derives with has dyn ref`
   - **Thêm `const`** (dùng cho `const_decl`, Phụ lục A).
   - **Bỏ `as`**: bản này không có cú pháp alias trong `use`; `as` là định danh bình thường.
   - **`test` là từ khoá theo ngữ cảnh**: chỉ là từ khoá khi đứng đầu item và ngay sau là `fn` (`test fn name():`). Ở vị trí khác `test` là định danh, nên `test.run()` hợp lệ.
@@ -164,6 +164,18 @@ Phụ lục B. Chương trình mẫu
 | Set | `set{1, 2}` | `set[int]` |
 | Tuple | `(1, "a")` | `(int, str)` |
 | Bản ghi ẩn danh | `{name: "An", age: 20}` | `{name: str, age: int}` |
+
+**Quy tắc `{…}` (VD-215)** — chế độ literal quyết theo **toàn bộ** khoá, không chỉ khoá đầu:
+
+| Viết | Nghĩa |
+|---|---|
+| `{ten: 1, tuoi: 2}` (mọi khoá là định danh trần) | **bản ghi** |
+| `{"ten": 1}` (khoá chuỗi literal) | **map** |
+| `{(k): 1}`, `{(k + "_id"): 1}` (khoá trong ngoặc — **cú pháp khoá tính toán chính thức**) | **map**, khoá là giá trị của biểu thức |
+| trộn chuỗi và `(expr)` | **map**, hợp lệ |
+| trộn định danh trần với chuỗi hoặc `(expr)`, **bất kể thứ tự** | **lỗi `VS0207`** (kèm gợi ý theo khoá đầu tiên) |
+| `{[k]: 1}` (khoá là danh sách — bẫy thường gặp từ JavaScript) | **map** với khoá là danh sách + **cảnh báo `VS0208`**; tắt cảnh báo bằng `{([k]): 1}` |
+| `{}` | như hiện trạng hiện tại (map rỗng) |
 
 **Năm dạng chuỗi** (QD §7.1):
 
@@ -215,21 +227,22 @@ Phụ lục B. Chương trình mẫu
 type User derives Eq, Show, Json:
     name: str
     age: int
-    email: str? = none
+    email: str? = None
 
 enum Shape derives Show:
     Circle(r: float)
     Rect(w: float, h: float)
     Empty
 
-alias UserId = int
-newtype Email = str             # kiểu mới, không tự chuyển đổi với str
+type UserId = int
+type Email(str)                 # kiểu mới, không tự chuyển đổi với str
 ```
 
 - `derives` sinh cài đặt trait chuẩn: `Eq`, `Ord`, `Hash`, `Show`, `Json`, `Default`. Kiểu chứa `float` **không** derive được `Eq`/`Hash` (3.6).
 - Tạo bản ghi: `User(name: "An", age: 20)`; tham số có tên bắt buộc khi bản ghi có hơn 2 trường.
 - Cập nhật: `u with age: 21` trả bản ghi mới. Trường **bất biến** ở bản này (không có `var` cho trường).
-- `alias` là tên khác của cùng kiểu; `newtype` là kiểu mới, phải chuyển đổi tường minh (`Email(s)` / `e.0`).
+- `type X = T` là tên khác của cùng kiểu; `type Email(str)` là kiểu mới, phải chuyển đổi tường minh
+  (`Email(s)` / `let Email(s) = e`). **R12a (VD-178)**: `alias`/`newtype` **đã bỏ** ⇒ `VS0203`.
 
 ### 3.3 Kiểu cấu trúc cho dữ liệu bảng
 
@@ -334,7 +347,7 @@ match s:
 - **Or-pattern `|` giữ nguyên** (QD §7.3): `Circle(r) | Rect(w, h)` trong một arm. `|` **không bao giờ** là toán tử nhị phân trong biểu thức (Q8 sửa); bit-or là hàm `bit_or`.
 - **Guard không tính vào coverage**: nhánh có `if` **không** chứng minh được phủ, nên `Circle(r) if r > 100.0:` không làm `Circle` được coi là đã xét; phải có nhánh `Circle(r)` không guard hoặc `_`.
 - **Kiểu vô hạn** (`int`, `float`, `str`, `path`, `datetime`...) **bắt buộc** có `_`; range pattern **không** dùng để chứng minh phủ kiểu vô hạn.
-- Pattern đầy đủ: literal (kể cả `-1`), biến, `_`, tuple `(a, b)`, bản ghi `{name, age: 18..}`, enum `Circle(r)` / `Shape.Circle(r)`, list `[first, ..rest]`, range `0..10` / `0..=10`, or `|`, guard `if`. Pattern cho optional/Result: **`none`**, **`some(x)`**, **`ok(v)`**, **`err(e)`**.
+- Pattern đầy đủ: literal (kể cả `-1`), biến, `_`, tuple `(a, b)`, bản ghi `{name, age: 18..}`, enum `Circle(r)` / `Shape.Circle(r)`, list `[first, ..rest]`, range `0..10` / `0..=10`, or `|`, guard `if`. Pattern cho optional/Result: **`None`**, **`Some(x)`**, **`Ok(v)`**, **`Err(e)`** (**VD-212**: sai hoa thường ⇒ **lỗi `VS0203`** + gợi ý dạng đúng; `vis fmt` tự sửa trước khi biên dịch).
 - `if let PAT = EXPR:` là đường tắt của `match` một nhánh, **không** xét hết.
 
 ### 4.4 Optional
@@ -354,7 +367,9 @@ if let mail = user.email:
 
 ### 4.5 Toán tử
 
-Số học `+ - * / % **`; so sánh `== != < <= > >=`; logic `and or not`; bit bằng hàm `bit_and`, `bit_or`, `bit_xor`, `bit_not`, `shl`, `shr`, `ushr`; nối hàm `|>`: `xs |> filter(even) |> sum()`.
+Số học `+ - * / // % **`; so sánh `== != < <= > >=`; logic `and or not`; bit bằng hàm `bit_and`, `bit_or`, `bit_xor`, `bit_not`, `shl`, `shr`, `ushr`; nối hàm `|>`: `xs |> filter(even) |> sum()`.
+
+**R7 (VD-178)**: `/` **luôn** ra `float` (kể cả `int / int`); `//` chia lấy phần nguyên (làm tròn **xuống**, như Python); `%` khớp `//` nên phần dư **không âm** (`-7 % 2` = `1`); `//=` là gán ghép. `int / int` **không** còn ra `int`.
 
 **`|` không bao giờ là toán tử nhị phân trong biểu thức** (Q8 sửa, QD §7.3). Biểu thức chỉ có `|>`. `|` còn nghĩa ở đúng hai chỗ: **or-pattern** (4.3) và **pipe của chế độ lệnh** (9.3). Hệ quả: bit-or **phải** viết `bit_or(a, b)`.
 
@@ -394,7 +409,7 @@ Hệ quả, phải có golden test ở **ST-02a**:
 
 - **Đánh giá trái sang phải** [TK], tất định: toán hạng nhị phân, phần tử trong literal list/map/set/tuple, trường trong bản ghi, đối số trong lời gọi (vị trí trước, tên sau, giữ nguyên thứ tự viết).
 - `and`/`or` ngắn mạch: toán hạng phải **không được đánh giá** khi trái quyết định.
-- `??` ngắn mạch theo cùng luật: toán hạng phải chỉ đánh giá khi trái là `none`.
+- `??` ngắn mạch theo cùng luật: toán hạng phải chỉ đánh giá khi trái là `None`.
 - Thứ tự này là một phần của đặc tả: bộ vi sai interpreter/VM (18.2) dùng nó làm oracle.
 
 ---
@@ -431,7 +446,7 @@ Closure bắt biến theo giá trị. Muốn chia sẻ trạng thái biến đ�
 
 ```vis
 fn first[T](xs: list[T]) -> T?:
-    if xs.is_empty(): none else: xs[0]
+    if xs.is_empty(): None else: xs[0]
 
 fn max_by[T, K: Ord](xs: list[T], key: fn(T) -> K) -> T?: ...
 ```
@@ -812,7 +827,7 @@ pub trait Host: Send + Sync {
 
 | Module | Nội dung |
 |---|---|
-| `core` | kiểu dựng sẵn, helper Option/Result, trait chuẩn (`Show`, `Error`, `Render`), `Future`/`Task` |
+| `core` | kiểu dựng sẵn, helper Option/Result (**Option/Result hành xử như enum std** — tầng chạy là enum thật; trình kiểm kiểu xử lý như kiểu dựng sẵn để hiển thị `T?` và suy luận nhanh — VD-208), trait chuẩn (`Show`, `Error`, `Render`), `Future`/`Task` |
 | `text` | chuỗi, grapheme, chuẩn hoá Unicode, regex, định dạng, so sánh theo locale cơ bản |
 | `coll` | list, map, set, deque, heap, sắp xếp ổn định |
 | `stream` | map, filter, take, skip, chunk, zip, group_by, sort_by, uniq, sum, count, collect |
@@ -1126,7 +1141,7 @@ Nhãn task đổi **VT → ST** (QD §2.1); cột Trạng thái dùng `READY | B
 | 8 | `%` dấu theo số bị chia, `%0` panic, có `rem_euclid`/`mod_floor`; `**` phải-kết-hợp, cao hơn `*`, mũ âm panic | §7.3 |
 | 9 | Bit: thêm `bit_not`, `ushr`; `shr` số học; đếm ≥ 64 panic; có `checked_shl/shr` | §7.3 |
 | 10 | Bảng ưu tiên **12 mức** (postfix → `**` → một ngôi → `* / %` → `+ -` → `..` → `??` → so sánh → `not` → `and` → `or` → `\|>`) | §7.3 |
-| 11 | Optional: tự nâng `T → T?` ở gán/trả/đối số; `T??` lỗi; `?` trên `T?`; pattern `none/some/ok/err` | §7.3 |
+| 11 | Optional: tự nâng `T → T?` ở gán/trả/đối số (nhiều lớp — `T??` hợp lệ); `?` trên `T?`; pattern `Some/None/Ok/Err` | §7.3 |
 | 12 | Xét hết: guard **không** tính coverage; kiểu vô hạn **bắt buộc** `_` | §7.3 |
 | 13 | `trait Error: Show { message, source, span }`; `AnyError` xoá kiểu; `?` tự chuyển; `main -> Result[(), AnyError]`; plugin dùng `vis::Error` | §7.3 |
 | 14 | Mã thoát 0/1/2/101/126/127/130; panic payload `AnyError`; ViShell bọc **mỗi lệnh** trong task arena riêng, panic giải phóng arena, giữ biến/cwd/job/lịch sử; chưa có `defer` | §7.3 |
@@ -1156,7 +1171,7 @@ Nhãn task đổi **VT → ST** (QD §2.1); cột Trạng thái dùng `READY | B
 | VD-16 | Bảng ưu tiên chốt (cao → thấp): postfix (`. ?. () [] ? with`) → `**` → `-` một ngôi → `* / %` → `+ -` → `.. ..=` → `??` → so sánh (không kết hợp) → `not` → `and` → `or` → `|>`. `**` kết hợp **phải**, cao hơn `*`; mũ âm với int panic; có `checked_pow`. |
 | VD-17 | Float: NaN — `==` trả false; float **không** có `Eq/Ord/Hash`; kiểu chứa float không derive được `Eq/Hash`; dùng `total_cmp`. `percent` so sánh được với float theo tỉ lệ (`50pct == 0.5`); `ps.cpu` có kiểu `percent`. |
 | VD-18 | Chuỗi: **cấm `s[i]`**; dùng `.chars() .graphemes() .bytes() .byte_at(i)?`; có `byte_len()`, `char_count()`, `grapheme_count()`; so sánh theo dãy scalar. Index: thêm `xs[i]?` trả `T?`; `xs[-1]` panic có thông điệp. |
-| VD-19 | Optional: tự nâng `T → T?` ở gán, trả, đối số; `T??` là lỗi kiểu; `?` dùng được trên `T?` trong hàm trả `U?`; pattern `none`, `some(x)`, `ok(v)`, `err(e)`. |
+| VD-19 | Optional: tự nâng `T → T?` ở gán, trả, đối số; `T??` là lỗi kiểu; `?` dùng được trên `T?` trong hàm trả `U?`; pattern `None`, `Some(x)`, `Ok(v)`, `Err(e)` (**R1a**: viết thường ⇒ `VS0111`). |
 | VD-20 | Lỗi: `trait Error: Show { message, source, span }`; `AnyError` là kiểu xoá; mọi `E: Error` tự chuyển sang `AnyError` qua `?`; `main -> Result[(), AnyError]`; tên phía plugin Rust là `vis::Error`. Mã thoát: 0 ok, 1 lỗi từ main, 2 lỗi dùng/kiểu, 101 panic, 126 không chạy được, 127 không tìm thấy, 130 bị huỷ. |
 | VD-21 | Chế độ lệnh (QD §7.2): metachar là khoảng trắng, `( ) [ ] { } ; & $ ' " |`, `#` ở đầu từ; `"..."` có nội suy, `'...'` thô; `$x` biến phiên, `$env.NAME` môi trường; `;` tách pipeline; `&` nền chỉ khi là token cuối có khoảng trắng phía trước; `--` kết thúc cờ; `-5` là số nếu tham số kiểu số, ngược lại là cờ; `.vish`/REPL: `shell_item := use | let | fn | cmd | pipeline`. |
 | VD-22 | Parse chế độ lệnh **hai pha**: `vis-syntax` sinh `CmdCST` (từ trần chưa định kiểu) → `cmd_lower` trong `vis-types` dùng bảng chữ ký → **HIR**. Tiêu chí "cùng AST" đọc thành **"cùng HIR"**; vòng 1 chỉ làm `CmdCST` + golden, `cmd_lower` là task vòng 2. |
@@ -1302,16 +1317,16 @@ primary         := literal | 'self' | IDENT | 'ref' '(' expr ')' | '(' ')'
 
 args            := positional_args? named_args?
 positional_args := expr (',' expr)*
-named_args      := (',' '--' IDENT [':' expr])+
+named_args      := (',' ('--' IDENT [':' expr] | IDENT ':' expr))+
 
 field_updates   := IDENT ':' expr (',' IDENT ':' expr)*
 
 list_lit        := '[' [expr (',' expr)* ','?] ']'
-map_lit         := '{' [map_entry (',' map_entry)* ','?] '}'
-map_entry       := expr ':' expr
+map_lit         := '{' [map_entry (',' map_entry)* ','?] '}'        (* chế độ xét TOÀN BỘ khoá (VD-215) *)
+map_entry       := expr ':' expr                                    (* khoá (expr) = khoá tính toán chính thức *)
 set_lit         := 'set' '{' [expr (',' expr)* ','?] '}'
 record_lit      := '{' record_field (',' record_field)* ','? '}'
-record_field    := IDENT ':' expr | IDENT
+record_field    := IDENT ':' expr | IDENT                            (* trộn định danh trần với chuỗi trong cùng `{…}` ⇒ VS0207 *)
 
 if_expr         := 'if' if_cond ':' suite elif_arm* else_arm      (* else bắt buộc *)
 match_expr      := 'match' expr ':' NEWLINE INDENT match_arm+ DEDENT
@@ -1321,7 +1336,7 @@ match_expr      := 'match' expr ':' NEWLINE INDENT match_arm+ DEDENT
 pattern         := or_pattern
 or_pattern      := range_pattern ('|' range_pattern)*
 range_pattern   := atom_pattern [ '..' [atom_pattern] | '..=' atom_pattern ]
-atom_pattern    := '_' | literal | '-' INT | 'none' | dotted_path
+atom_pattern    := '_' | literal | '-' INT | 'None' | dotted_path
                  | '(' pattern (',' pattern)* ')'
                  | '[' [list_pat] ']'
                  | '{' [record_pat (',' record_pat)*] '}'
@@ -1346,7 +1361,7 @@ record_type     := IDENT ':' type (',' IDENT ':' type)*
 
 (* ===== A.6 Token ===== *)
 
-literal         := INT | FLOAT | CHAR | BOOL | 'none'
+literal         := INT | FLOAT | CHAR | BOOL
                  | STRING | RAW_STRING | TRIPLE_STRING | RAW_TRIPLE_STRING
                  | BYTES | PATH_STRING | SIZE | DURATION | PERCENT   (* terminal một token, theo SPEC-lex *)
 path_lit        := PATH_STRING | STRING
@@ -1419,7 +1434,7 @@ shell_item      := use_decl | fn_decl | cmd_decl | shell_let | pipeline NEWLINE
 
 ```vis
 #!/usr/bin/env vis
-use std.fmt.json
+use std.json
 use std.time
 
 type Entry derives Json, Show:
@@ -1427,8 +1442,8 @@ type Entry derives Json, Show:
     size: size
     modified: datetime
 
-## Tìm 20 tệp lớn nhất đã sửa trong 7 ngày, ghi báo cáo JSON
 fn main(src: cap[Dir] @ p".", out: cap[Dir] @ p"./reports" (write)) -> Result[(), AnyError]:
+    ## Tìm 20 tệp lớn nhất đã sửa trong 7 ngày, ghi báo cáo JSON
     let since = time.now() - 7d
     let files = src.walk()
         |> filter(e => e.is_file() and e.modified >= since)

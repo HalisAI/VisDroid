@@ -85,6 +85,18 @@ impl<'a> Parser<'a> {
             let d = self.derives()?;
             Self::push_node(&mut elems, d);
         }
+        // **R12a (VD-178)**: `type X = T` (thay `alias`) và `type Email(str)` (thay `newtype`).
+        if self.eat_punct("=").is_some() {
+            let t = self.parse_type()?;
+            Self::push_node(&mut elems, t);
+            return Ok(self.node(NodeKind::AliasDecl, elems));
+        }
+        if self.eat_punct("(").is_some() {
+            let t = self.parse_type()?;
+            Self::push_node(&mut elems, t);
+            elems.push(self.expect_punct(")")?);
+            return Ok(self.node(NodeKind::NewtypeDecl, elems));
+        }
         elems.push(self.expect_punct(":")?);
         elems.push(self.expect_newline()?);
         elems.push(self.expect_indent()?);
@@ -122,12 +134,28 @@ impl<'a> Parser<'a> {
             let d = self.derives()?;
             Self::push_node(&mut elems, d);
         }
+        // **R12a (VD-178)**: `type X = T` (thay `alias`) và `type Email(str)` (thay `newtype`).
+        if self.eat_punct("=").is_some() {
+            let t = self.parse_type()?;
+            Self::push_node(&mut elems, t);
+            return Ok(self.node(NodeKind::AliasDecl, elems));
+        }
+        if self.eat_punct("(").is_some() {
+            let t = self.parse_type()?;
+            Self::push_node(&mut elems, t);
+            elems.push(self.expect_punct(")")?);
+            return Ok(self.node(NodeKind::NewtypeDecl, elems));
+        }
         elems.push(self.expect_punct(":")?);
         elems.push(self.expect_newline()?);
         elems.push(self.expect_indent()?);
         while !self.at_kind(Kind::Dedent) && !self.at_eof() {
             let v = self.variant()?;
             Self::push_node(&mut elems, v);
+            // **R11 (VD-178)**: biến thể **cùng dòng**, ngăn bằng `,` (`Circle(float), Empty`).
+            if self.eat_punct(",").is_some() {
+                continue;
+            }
             self.require_line_end(&mut elems)?;
         }
         if let Some(d) = self.take_dedent() {
@@ -141,10 +169,19 @@ impl<'a> Parser<'a> {
         if self.at_punct("(") {
             elems.push(self.bump());
             while !self.at_punct(")") {
-                let mut f = vec![self.expect_ident()?, self.expect_punct(":")?];
-                let t = self.parse_type()?;
-                Self::push_node(&mut f, t);
-                Self::push_node(&mut elems, self.node(NodeKind::VariantField, f));
+                // **R11 (VD-178)**: `Circle(float)` — trường **vị trí** (không tên);
+                // `Circle(r: float)` vẫn là trường **có tên**.
+                if self.tok().kind == Kind::Ident && self.peek_punct(1, ":") {
+                    let mut f = vec![self.expect_ident()?, self.expect_punct(":")?];
+                    let t = self.parse_type()?;
+                    Self::push_node(&mut f, t);
+                    Self::push_node(&mut elems, self.node(NodeKind::VariantField, f));
+                } else {
+                    let t = self.parse_type()?;
+                    let mut f = Vec::new();
+                    Self::push_node(&mut f, t);
+                    Self::push_node(&mut elems, self.node(NodeKind::VariantField, f));
+                }
                 if self.eat_punct(",").is_none() {
                     break;
                 }
@@ -163,13 +200,6 @@ impl<'a> Parser<'a> {
             Self::push_node(&mut elems, p);
         }
         Ok(self.node(NodeKind::Derives, elems))
-    }
-
-    pub(super) fn alias_decl(&mut self, kind: NodeKind) -> PResult<Node> {
-        let mut elems = vec![self.bump(), self.expect_ident()?, self.expect_punct("=")?];
-        let t = self.parse_type()?;
-        Self::push_node(&mut elems, t);
-        Ok(self.node(kind, elems))
     }
 
     pub(super) fn trait_decl(&mut self, mods: Vec<Elem>) -> PResult<Node> {
@@ -260,6 +290,14 @@ impl<'a> Parser<'a> {
         let mut elems = mods;
         elems.push(self.expect_kw("const")?);
         elems.push(self.expect_ident()?);
+        // **R9 (VD-178)**: gợi ý cho mẫu `const A = …` (VS0204 khi RHS không literal; R7 cho
+        // suy kiểu từ literal).
+        if !self.at_punct(":") {
+            return Err(self.err_code(
+                &vis_diag::SYNTAX_CODES[3],
+                "`const` cần kiểu khi vế phải không phải literal — gợi ý: `const A: int = 1` (R7 cho suy kiểu từ literal)",
+            ));
+        }
         elems.push(self.expect_punct(":")?);
         let t = self.parse_type()?;
         Self::push_node(&mut elems, t);

@@ -102,10 +102,21 @@ impl<'a> Lowerer<'a> {
             }
             NodeKind::MapLit => {
                 let mut entries = Vec::new();
+                // **VD-215 (2026-11-18)**: `{[k]: …}` (khoá là danh sách) ⇒ **cảnh báo** `VS0208`;
+                // `{([k]): …}` (lồng trong ngoặc) là cách tắt cảnh báo. Khoá tính toán là `(expr)`.
                 for e in node.children().filter(|n| n.kind == NodeKind::MapEntry) {
                     let mut it = e.children();
-                    let k = it
-                        .next()
+                    let knode = it.next();
+                    if let Some(kn) = &knode {
+                        if kn.kind == NodeKind::ListLit {
+                            self.diag(
+                                &vis_diag::SYNTAX_CODES[7],
+                                "`{[k]: …}` khoá là danh sách — dùng `{(k): v}`; viết `{([k]): …}` nếu muốn giữ danh sách làm khoá",
+                                kn.span,
+                            );
+                        }
+                    }
+                    let k = knode
                         .map(|n| self.lower_expr(n))
                         .unwrap_or(HExpr::Error { span: e.span });
                     let v = it
@@ -249,6 +260,15 @@ impl<'a> Lowerer<'a> {
                         }
                     }
                 }
+                // **R12a (VD-178)**: `Email("a@b")` — newtype **trong suốt** ⇒ hạ thẳng đối số.
+                if let HExpr::Var { name, .. } = &callee {
+                    if self.newtypes.iter().any(|n| n == name)
+                        && args.len() == 1
+                        && named.is_empty()
+                    {
+                        return args.into_iter().next().unwrap();
+                    }
+                }
                 self.maybe_enum_lit(callee, args, named, span)
             }
             NodeKind::Index => {
@@ -374,11 +394,20 @@ impl<'a> Lowerer<'a> {
         };
         if t.kind == Kind::Kw {
             return match t.text.as_str() {
-                "none" => HExpr::Opt {
-                    value: None,
-                    ty: Type::Opt(Box::new(Type::Error)),
-                    span,
-                },
+                // **R2 (VD-178)**: từ khoá `none` đã **bỏ** — dùng `None` (`VS0203`).
+                // Hạ vẫn tạo Opt(None) để biên dịch tiếp (chẩn đoán là cổng chặn).
+                "none" => {
+                    self.diag(
+                        &vis_diag::SYNTAX_CODES[2],
+                        "`none` đã bỏ — dùng `None` (từ khoá đã bỏ, dùng biến thể `None` của `Option`)",
+                        span,
+                    );
+                    HExpr::Opt {
+                        value: None,
+                        ty: Type::Opt(Box::new(Type::Error)),
+                        span,
+                    }
+                }
                 "true" | "false" => HExpr::Lit {
                     lit: Lit {
                         kind: LitKind::Bool,
@@ -394,15 +423,20 @@ impl<'a> Lowerer<'a> {
             return HExpr::Error { span };
         };
         // ST-14 (VD-47a): chuỗi có `{expr}` ⇒ hạ **từng mảnh** thành `HExpr::Interp`.
-        if kind == LitKind::Str
+        // **R6a (VD-178)**: `p"…"` cũng **có** nội suy (nhưng **không** escape).
+        if (kind == LitKind::Str || kind == LitKind::Path)
             && t.kind != Kind::RawStr
             && t.kind != Kind::RawMulti
             && t.text.contains('{')
         {
-            let ngoac = if t.kind == Kind::MultiStr { 3 } else { 1 };
-            if t.text.len() >= ngoac * 2 {
-                let trong = &t.text[ngoac..t.text.len() - ngoac];
-                return self.chuoi_noi_suy(trong, ngoac, span);
+            let (dau, cuoi) = match t.kind {
+                Kind::MultiStr => (3, 3),
+                Kind::Path => (2, 1),
+                _ => (1, 1),
+            };
+            if t.text.len() >= dau + cuoi {
+                let trong = &t.text[dau..t.text.len() - cuoi];
+                return self.chuoi_noi_suy(trong, dau, t.kind == Kind::Path, span);
             }
         }
         let lit = Lit {
@@ -417,7 +451,7 @@ impl<'a> Lowerer<'a> {
     /// `Lowerer` này** (chia sẻ `symbols`/`scope` ⇒ tên trong nội suy giải đúng ngữ cảnh), với CST
     /// của mảnh được **đệm khoảng trắng** tới đúng **offset tuyệt đối** trong tệp để `span` (và do đó
     /// `dòng:cột`) trỏ **đúng chỗ**.
-    fn chuoi_noi_suy(&mut self, trong: &str, ngoac: usize, span: Span) -> HExpr {
+    fn chuoi_noi_suy(&mut self, trong: &str, ngoac: usize, no_escape: bool, span: Span) -> HExpr {
         let mut parts: Vec<InterpPart> = Vec::new();
         let mut chu = String::new();
         let mut i = 0usize;
@@ -471,8 +505,17 @@ impl<'a> Lowerer<'a> {
                         parts.push(InterpPart::Str(std::mem::take(&mut chu)));
                     }
                     let off = span.start + ngoac + start;
-                    match self.ha_manh(&trong[start..end], off) {
-                        Some(e) => parts.push(InterpPart::Expr(Box::new(e))),
+                    // **R6c (VD-178)**: tách `:spec` ở độ sâu ngoặc 0 (`.N` = N chữ số thập phân).
+                    let manh = &trong[start..end];
+                    let (src, spec) = tach_spec(manh);
+                    match self.ha_manh(src, off) {
+                        Some(e) => match spec {
+                            Some(sp) => parts.push(InterpPart::ExprSpec {
+                                expr: Box::new(e),
+                                spec: sp,
+                            }),
+                            None => parts.push(InterpPart::Expr(Box::new(e))),
+                        },
                         None => {
                             hong = true;
                             break;
@@ -480,7 +523,7 @@ impl<'a> Lowerer<'a> {
                     }
                     i = end + 1;
                 }
-                '\\' => {
+                '\\' if !no_escape => {
                     let (c2, dung) = giai_escape(sau);
                     chu.push(c2);
                     i += n + dung;
@@ -734,9 +777,32 @@ impl<'a> Lowerer<'a> {
         span: Span,
     ) -> HExpr {
         match &callee {
-            HExpr::Var {
-                name, sym: None, ..
-            } => {
+            HExpr::Var { name, .. } => {
+                // **R11 (VD-178)**: `U(n: 1)` — dựng bản ghi theo **tên kiểu**.
+                if !named.is_empty() {
+                    if let Some((_, rid)) = self.rec_names.iter().find(|(n, _)| n == name).cloned()
+                    {
+                        // **R5a (VD-178)**: trường **thiếu** lấy **giá trị mặc định** của khai báo.
+                        let mut fields = named;
+                        if let Some(rec) = self.items.iter().find_map(|it| match it {
+                            crate::hir::HItem::Rec(r) if r.id == rid => Some(r.clone()),
+                            _ => None,
+                        }) {
+                            for f in &rec.fields {
+                                if !fields.iter().any(|(n, _)| n == &f.name) {
+                                    if let Some(d) = &f.default {
+                                        fields.push((f.name.clone(), d.clone()));
+                                    }
+                                }
+                            }
+                        }
+                        return HExpr::Record {
+                            fields,
+                            ty: Type::Record(rid),
+                            span,
+                        };
+                    }
+                }
                 if let Some((_, eid, _)) = self
                     .variant_index
                     .iter()
@@ -930,4 +996,20 @@ fn giai_escape(sau: &str) -> (char, usize) {
         Some(c) => (c, c.len_utf8()),
         None => ('\\', 0),
     }
+}
+
+/// **R6c (VD-178)**: tách `expr` và `:spec` ở **độ sâu ngoặc 0** của một chỗ nội suy.
+fn tach_spec(inner: &str) -> (&str, Option<String>) {
+    let mut depth = 0usize;
+    for (idx, ch) in inner.char_indices() {
+        match ch {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            ':' if depth == 0 => {
+                return (&inner[..idx], Some(inner[idx + 1..].to_string()));
+            }
+            _ => {}
+        }
+    }
+    (inner, None)
 }

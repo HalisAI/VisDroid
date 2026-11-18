@@ -143,11 +143,25 @@ fn than_fuzz() {
     // **SỬA KÈM LÝ DO (ST-56b)**: **325** module nguồn (382 ca − 57 `.err`).
     // **SỬA KÈM LÝ DO (ST-57)**: **329** module nguồn (388 ca − 59 `.err`).
     // **SỬA KÈM LÝ DO (ST-72)**: **364** module nguồn (447 ca − 83 `.err`).
+    // **SỬA KÈM LÝ DO (R6, VD-178)**: **368** module nguồn (452 ca − 84 `.err`).
+    // **SỬA KÈM LÝ DO (R17, VD-178)**: **369** module nguồn (453 ca − 84 `.err`).
+    // **SỬA KÈM LÝ DO (R3b, VD-178)**: **370** module nguồn (454 ca − 84 `.err`).
+    // **SỬA KÈM LÝ DO (R3a, VD-178)**: **371** module nguồn (455 ca − 84 `.err`).
+    // **SỬA KÈM LÝ DO (R16, VD-178)**: **372** module nguồn (456 ca − 84 `.err`).
+    // **SỬA KÈM LÝ DO (R12a, VD-178)**: **373** module nguồn (457 ca − 84 `.err`).
+    // **SỬA KÈM LÝ DO (R11, VD-178)**: **374** module nguồn (458 ca − 84 `.err`).
+    // **SỬA KÈM LÝ DO (R7, VD-178)**: **375** module nguồn (459 ca − 84 `.err`).
+    // **SỬA KÈM LÝ DO (R8, VD-178)**: **376** module nguồn (460 ca − 84 `.err`).
+    // **SỬA KÈM LÝ DO (R5a, VD-178)**: **377** module nguồn (461 ca − 84 `.err`).
+    // **SỬA KÈM LÝ DO (R5c, VD-178)**: **378** module nguồn (462 ca − 84 `.err`).
+    // **SỬA KÈM LÝ DO (R20a, VD-178)**: **379** module nguồn (463 ca − 84 `.err`).
+    // **SỬA KÈM LÝ DO (R20b, VD-178)**: **380** module nguồn (464 ca − 84 `.err`).
+    // **SỬA KÈM LÝ DO (R19b, VD-178)**: **380** module nguồn (465 ca − 85 `.err`).
+    // **SỬA KÈM LÝ DO (R2, VD-178)**: **383** module nguồn (469 ca − 86 `.err`).
     assert_eq!(
         goc.len(),
-        // **SỬA KÈM LÝ DO (ST-60)**: **347** module nguồn (416 ca − 69 `.err`).
-        364,
-        "phải đủ 364 module nguồn (ST-41: 447 ca − 83 `.err`)"
+        383,
+        "phải đủ 383 module nguồn (ST-41: 469 ca − 86 `.err`)"
     );
     let phut = so_phut();
     let bat_dau = std::time::Instant::now();

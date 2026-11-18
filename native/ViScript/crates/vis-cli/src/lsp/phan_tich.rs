@@ -45,7 +45,7 @@ pub struct KetQua {
 }
 
 /// Chữ ký `fn` cho `detail`/hover: `fn add(a: int, b: int) -> int`.
-pub(crate) fn chu_ky_fn(f: &vis_types::HFn, tbl: &TypeTable) -> String {
+pub fn chu_ky_fn(f: &vis_types::HFn, tbl: &TypeTable) -> String {
     let ps: Vec<String> = f
         .params
         .iter()
@@ -62,7 +62,7 @@ pub(crate) fn chu_ky_fn(f: &vis_types::HFn, tbl: &TypeTable) -> String {
     format!("fn {}({}) -> {}", f.name, ps.join(", "), tbl.show(&f.ret))
 }
 
-pub(crate) fn goi_y_item(it: &HItem, tbl: &TypeTable) -> Option<GoiY> {
+pub fn goi_y_item(it: &HItem, tbl: &TypeTable) -> Option<GoiY> {
     match it {
         HItem::Fn(f) => Some(GoiY {
             label: f.name.clone(),

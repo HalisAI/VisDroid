@@ -44,6 +44,8 @@
 //! assert_eq!(out.exit, 1);
 //! ```
 
+pub mod builtin_assert;
+pub mod builtin_list;
 mod gan;
 mod host;
 pub mod json;
@@ -59,6 +61,7 @@ pub mod ops {
 }
 
 pub mod builtin;
+mod builtin_value;
 pub mod interp;
 mod pat;
 

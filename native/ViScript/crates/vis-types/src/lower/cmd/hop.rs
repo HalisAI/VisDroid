@@ -47,8 +47,8 @@ impl<'a> Lowerer<'a> {
                 NodeKind::CmdItems => self.ha_dong(child, &sigs),
                 NodeKind::CmdBg => {
                     self.diag(
-                        &COMMAND_CODES[3],
-                        "chạy nền `&` chưa hỗ trợ ở VS0 (chưa có tiến trình)",
+                        &COMMAND_CODES[4],
+                        "chạy nền `&` chưa hỗ trợ (chưa có tiến trình)",
                         child.span,
                     );
                 }
@@ -83,8 +83,8 @@ impl<'a> Lowerer<'a> {
             if con.kind == NodeKind::CmdBg {
                 // (a)4 — VS0 chưa có tiến trình: báo đúng **VS0604**, không hạ thành no-op.
                 self.diag(
-                    &COMMAND_CODES[3],
-                    "chạy nền `&` chưa hỗ trợ ở VS0 (chưa có tiến trình)",
+                    &COMMAND_CODES[4],
+                    "chạy nền `&` chưa hỗ trợ (chưa có tiến trình)",
                     con.span,
                 );
                 continue;
@@ -115,7 +115,7 @@ impl<'a> Lowerer<'a> {
             ket = truoc.clone();
         }
         // ST-41: hook `where`/`sort_by`/`get`/`select` đã đặt kiểu **chính xác** (giữ nguyên); nếu chưa
-        // (stage thường/group) ⇒ dùng `kieu_stage` (literal bản ghi ⇒ `list[record#N]`).
+        // (stage thường/group) ⇒ dùng `kieu_stage` (literal bản ghi ⇒ `list[{a: int}]`).
         if matches!(self.last_stage_ty, Type::Error) {
             if let Some(last) = stage.last() {
                 self.last_stage_ty = self.kieu_stage(last, sigs);

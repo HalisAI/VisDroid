@@ -35,7 +35,7 @@ thread_local! {
 }
 
 /// **ST-100**: dọn cache module (gọi cùng `didClose`).
-pub(crate) fn xoa_cache_module() {
+pub fn xoa_cache_module() {
     CACHE_MOD.with(|c| c.borrow_mut().clear());
 }
 
@@ -117,7 +117,7 @@ fn goi_y_std(m: &str, f: &vis_types::stdlib::StdFn) -> Option<GoiY> {
 ///
 /// **ST-100**: tệp chính luôn phân tích lại từ `text`; chỉ **item do module phụ** được cache khi danh
 /// sách `use ./…` và `(mtime,size)` của mọi tệp phụ không đổi.
-pub(crate) fn phan_tich_module(path: &Path, text: &str, mode: Mode) -> Option<KetQua> {
+pub fn phan_tich_module(path: &Path, text: &str, mode: Mode) -> Option<KetQua> {
     let dir = path.parent().unwrap_or_else(|| Path::new("."));
     let use_now = use_dia_phuong(text, dir);
     let khoa = path.to_path_buf();
@@ -205,7 +205,7 @@ pub(crate) fn phan_tich_module(path: &Path, text: &str, mode: Mode) -> Option<Ke
 }
 
 /// Phân tích theo URI: tệp có trên đĩa ⇒ module-aware; ngược lại đường **một tệp** như trước.
-pub(crate) fn phan_tich_uri(uri: &str, text: &str, mode: Mode) -> KetQua {
+pub fn phan_tich_uri(uri: &str, text: &str, mode: Mode) -> KetQua {
     if let Some(p) = super::uri_thanh_duong(uri).filter(|p| Path::new(p).is_file()) {
         if let Some(kq) = phan_tich_module(Path::new(&p), text, mode) {
             return kq;

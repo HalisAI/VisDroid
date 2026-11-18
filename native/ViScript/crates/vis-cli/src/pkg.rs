@@ -59,7 +59,7 @@ fn chay(args: &[String]) -> Result<(), String> {
 }
 
 /// Băm hex của một chuỗi (SHA-256 thật, qua `vis-bytecode`).
-pub(crate) fn bam(s: &str) -> String {
+pub fn bam(s: &str) -> String {
     let h = vis_bytecode::source_hash(s);
     let mut out = String::with_capacity(64);
     for b in h {
@@ -69,7 +69,7 @@ pub(crate) fn bam(s: &str) -> String {
 }
 
 /// Chuẩn hoá **khi ingest**: bỏ BOM, CRLF→LF, đúng **một** LF cuối; từ chối non-UTF-8.
-pub(crate) fn chuan_hoa(bytes: &[u8]) -> Result<String, String> {
+pub fn chuan_hoa(bytes: &[u8]) -> Result<String, String> {
     let s = std::str::from_utf8(bytes).map_err(|e| format!("tệp không phải UTF-8: {e}"))?;
     let s = s.strip_prefix('\u{feff}').unwrap_or(s);
     let s = s.replace("\r\n", "\n");
@@ -364,38 +364,38 @@ fn loi_xung_dot(e: &resolver::LoiXungDot) -> String {
 
 // ----- vis.lock -----
 
-pub(crate) struct TepKhoa {
-    pub(crate) path: String,
-    pub(crate) sha256: String,
+pub struct TepKhoa {
+    pub path: String,
+    pub sha256: String,
 }
 
-pub(crate) struct GoiKhoa {
-    pub(crate) name: String,
-    pub(crate) version: String,
-    pub(crate) sha256: String,
+pub struct GoiKhoa {
+    pub name: String,
+    pub version: String,
+    pub sha256: String,
     /// **ST-90 (VD-110)**: entry của gói; `None` = lock **cũ** (fallback quy ước).
-    pub(crate) entry: Option<String>,
-    pub(crate) files: Vec<TepKhoa>,
+    pub entry: Option<String>,
+    pub files: Vec<TepKhoa>,
     /// **ST-129 (VD-125)**: ràng buộc đã chọn ra phiên bản này (dạng **chuẩn hoá**);
     /// `None` = lock **định dạng cũ** (không có trường) ⇒ khi ghi lại phải sinh `=<version>`.
-    pub(crate) version_req: Option<String>,
+    pub version_req: Option<String>,
 }
 
 /// Định dạng **hiện tại** của `vis.lock` (ST-129).
-pub(crate) const LOCK_PHIEN_BAN: u16 = 2;
+pub const LOCK_PHIEN_BAN: u16 = 2;
 
 /// Toàn bộ `vis.lock` đã đọc: định dạng + **ràng buộc gốc** + các gói (ST-129, VD-125).
-pub(crate) struct Khoa {
+pub struct Khoa {
     /// `1` = định dạng cũ (ST-70..ST-128), `2` = định dạng có `roots`/`version_req`.
-    pub(crate) phien_ban: u16,
+    pub phien_ban: u16,
     /// Ràng buộc **gốc** người dùng đòi (`pkg add`), đã chuẩn hoá — chỉ có ở định dạng 2.
-    pub(crate) roots: BTreeMap<String, String>,
-    pub(crate) goi: Vec<GoiKhoa>,
+    pub roots: BTreeMap<String, String>,
+    pub goi: Vec<GoiKhoa>,
 }
 
 impl Khoa {
     /// Lock định dạng cũ (hoặc thiếu trường mới) ⇒ cần **migrate** khi ghi.
-    pub(crate) fn can_migrate(&self) -> bool {
+    pub fn can_migrate(&self) -> bool {
         self.phien_ban < LOCK_PHIEN_BAN || self.goi.iter().any(|g| g.version_req.is_none())
     }
 }
@@ -525,7 +525,7 @@ fn doc_khoa(duong: &Path, bat_buoc: bool) -> Result<Vec<GoiKhoa>, String> {
 }
 
 /// Đọc + validate `vis.lock` trong `dir` — dùng cho `use pkg.*` (ST-71).
-pub(crate) fn doc_khoa_cua(dir: &Path) -> Result<Vec<GoiKhoa>, String> {
+pub fn doc_khoa_cua(dir: &Path) -> Result<Vec<GoiKhoa>, String> {
     doc_khoa(&dir.join("vis.lock"), true)
 }
 

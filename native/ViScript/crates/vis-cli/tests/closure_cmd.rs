@@ -2,7 +2,7 @@
 //! **ST-38 (VSH1a)** — hạ closure-arg trong `.vish` + `where`/`each`/`first`/`count`.
 //!
 //! Khoá: closure ⇒ `HExpr::Lambda` với **span tuyệt đối** (đệm theo **byte**), `where`/`count`/`first`
-//! chạy đúng, `first` trên list rỗng ⇒ `none`, `each` trả `()` và **không** nối tiếp được,
+//! chạy đúng, `first` trên list rỗng ⇒ `None`, `each` trả `()` và **không** nối tiếp được,
 //! lỗi kiểu trong thân ⇒ `VS0412` đúng **dòng:cột** (kể cả khi tệp có ký tự **nhiều byte** trước đó).
 
 use std::path::PathBuf;
@@ -75,7 +75,7 @@ fn first_lay_dau() {
     let d = tam("first");
     let (c, o, e) = chay(&d, "first", "( [1, 2] ) | first\n");
     assert_eq!(c, 0, "stderr: {e}");
-    assert_eq!(o, "some(1)\n");
+    assert_eq!(o, "Some(1)\n");
     let _ = std::fs::remove_dir_all(&d);
 }
 
@@ -85,7 +85,7 @@ fn first_tren_list_rong_la_none() {
     let d = tam("fempty");
     let (c, o, e) = chay(&d, "fempty", "( [] ) | first\n");
     assert_eq!(c, 0, "stderr: {e}");
-    assert_eq!(o, "none\n");
+    assert_eq!(o, "None\n");
     let _ = std::fs::remove_dir_all(&d);
 }
 
@@ -157,18 +157,19 @@ fn span_than_dung_khi_truoc_do_co_ky_tu_nhieu_byte() {
     );
     assert_eq!(c1, 2, "stderr: {e1}");
     assert_eq!(c2, 2, "stderr: {e2}");
+    // **R9 (VD-178)**: toán tử không hỗ trợ cho kiểu ⇒ `VS0414` (tách khỏi `VS0412`).
     assert!(
-        e1.contains("VS0412") && e2.contains("VS0412"),
+        e1.contains("VS0414") && e2.contains("VS0414"),
         "{e1} | {e2}"
     );
     // Cột trong **cùng** một dòng phải bằng nhau; chỉ **số dòng** được khác (2 vs 4).
     let cot = |e: &str| -> String {
-        let cuoi = e.lines().find(|l| l.contains("VS0412")).unwrap_or("");
+        let cuoi = e.lines().find(|l| l.contains("VS0414")).unwrap_or("");
         cuoi.split(':').nth(2).unwrap_or("?").trim().to_string()
     };
     assert_eq!(cot(&e1), cot(&e2), "cột lệch: {e1} | {e2}");
     let dong_cua = |e: &str| -> String {
-        let cuoi = e.lines().find(|l| l.contains("VS0412")).unwrap_or("");
+        let cuoi = e.lines().find(|l| l.contains("VS0414")).unwrap_or("");
         cuoi.split(':').nth(1).unwrap_or("?").to_string()
     };
     assert_eq!(dong_cua(&e1), "2");

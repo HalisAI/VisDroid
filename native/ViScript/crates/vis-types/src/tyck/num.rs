@@ -20,8 +20,8 @@ pub(super) fn promote(l: &Type, r: &Type, l_lit: bool, r_lit: bool) -> (Type, Ty
 
 /// Kiểu kết quả của toán tử số học; `None` = không hợp lệ (⇒ `VS0412`).
 pub(super) fn so_hoc(op: BinOp, l: &Type, r: &Type, l_lit: bool, r_lit: bool) -> Option<Type> {
-    use BinOp::{Add, Div, Mul, Pow, Range, RangeIncl, Rem, Sub};
-    use Type::{Char, Duration, Float, Int, Percent, Size};
+    use BinOp::{Add, Div, FloorDiv, Mul, Pow, Range, RangeIncl, Rem, Sub};
+    use Type::{Char, Duration, Float, Int, Percent, Size, Str};
 
     if l.is_error() || r.is_error() {
         return Some(Type::Error);
@@ -42,6 +42,8 @@ pub(super) fn so_hoc(op: BinOp, l: &Type, r: &Type, l_lit: bool, r_lit: bool) ->
         });
     }
     Some(match (op, &l, &r) {
+        // **R6b (VD-178)**: `str + str` **nối** chuỗi (trước: `VS0412`).
+        (Add, Str, Str) => Type::Str,
         (Add | Sub, Int, Int) => Type::Int,
         (Add | Sub, Float, Float) => Type::Float,
         (Add | Sub, Size, Size) => Type::Size,
@@ -54,7 +56,9 @@ pub(super) fn so_hoc(op: BinOp, l: &Type, r: &Type, l_lit: bool, r_lit: bool) ->
         (Mul, Duration, Int) | (Mul, Int, Duration) => Type::Duration,
         (Mul, Duration, Percent) | (Mul, Percent, Duration) => Type::Duration,
         (Mul, Percent, Int) | (Mul, Int, Percent) => Type::Int,
-        (Div, Int, Int) => Type::Int,
+        // **R7 (VD-178)**: `/` **luôn** `float`; `//` chia lấy phần nguyên.
+        (Div, Int, Int) => Type::Float,
+        (FloorDiv, Int, Int) => Type::Int,
         (Div, Float, Float) => Type::Float,
         (Div, Size, Int) => Type::Size,
         (Div, Duration, Int) => Type::Duration,

@@ -17,7 +17,23 @@ use std::process::Command;
 /// **SỬA KÈM LÝ DO (ST-60c)**: 419 → **426** (+7 ca `trait/`: derives↔siêu trait, enum Show, Eq sâu).
 /// **SỬA KÈM LÝ DO (ST-61)**: 426 → **441** (+15 ca nhóm `kenh/`).
 /// **SỬA KÈM LÝ DO (ST-72)**: 441 → **447** (+6 ca nhóm `cap/`).
-const SO_CA: usize = 447;
+/// **SỬA KÈM LÝ DO (R9, VD-178)**: 447 → **448** (+`loi/range-khong-int` VS0416).
+/// **SỬA KÈM LÝ DO (R6, VD-178)**: 448 → **452** (+4 ca `chuoi/`).
+/// **SỬA KÈM LÝ DO (R17, VD-178)**: 452 → **453** (+`dieu-khien/is-empty`).
+/// **SỬA KÈM LÝ DO (R3b, VD-178)**: 453 → **454** (+`result/let-else`).
+/// **SỬA KÈM LÝ DO (R3a, VD-178)**: 454 → **455** (+`result/if-let-pattern`).
+/// **SỬA KÈM LÝ DO (R16, VD-178)**: 455 → **456** (+`pham-vi/che-ten-let`).
+/// **SỬA KÈM LÝ DO (R12a, VD-178)**: 456 → **457** (+`kieu/type-alias-newtype`).
+/// **SỬA KÈM LÝ DO (R11, VD-178)**: 457 → **458** (+`enum/vi-tri-va-dung-ten`).
+/// **SỬA KÈM LÝ DO (R7, VD-178)**: 458 → **459** (+`so-hoc/chia-nguyen`).
+/// **SỬA KÈM LÝ DO (R8, VD-178)**: 459 → **460** (+`list/chi-so-an-toan`).
+/// **SỬA KÈM LÝ DO (R5a, VD-178)**: 460 → **461** (+`ham/goi-ten`).
+/// **SỬA KÈM LÝ DO (R5c, VD-178)**: 461 → **462** (+`chuoi-phuong-thuc/std-method`).
+/// **SỬA KÈM LÝ DO (R20a, VD-178)**: 462 → **463** (+`assert/thong-diep`).
+/// **SỬA KÈM LÝ DO (R20b, VD-178)**: 463 → **464** (+`list/duyet-nang-cao`).
+/// **SỬA KÈM LÝ DO (R19b, VD-178)**: 464 → **465** (+`loi/doi-dau-tran` VS0507).
+/// **SỬA KÈM LÝ DO (R2, VD-178)**: 465 → **469** (+`optional/{int-qhap-gan, map-get-lot, t-qhap-generic}` + `loi/none-bo`).
+const SO_CA: usize = 469;
 
 fn vis(args: &[&str]) -> (i32, String, String) {
     let o = Command::new(env!("CARGO_BIN_EXE_vis"))

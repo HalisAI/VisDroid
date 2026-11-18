@@ -610,7 +610,7 @@ impl Quyen {
 /// - **Ca âm** (ST-174 §6): [`so_lan`] đếm số lần điểm chèn **thực sự chạy**; nếu điểm chèn bị bỏ thì
 ///   `so_lan == 0` ⇒ ca tất định **báo “không chạy được điểm chèn”**, không thể xanh im lặng.
 #[cfg(all(test, unix))]
-pub(crate) mod chen {
+pub mod chen {
     use std::cell::{Cell, RefCell};
     use std::path::Path;
 
@@ -623,24 +623,24 @@ pub(crate) mod chen {
     }
 
     /// Đăng ký hook cho **luồng hiện tại** (đặt lại bộ đếm).
-    pub(crate) fn dat(h: Hook) {
+    pub fn dat(h: Hook) {
         DEM.with(|d| d.set(0));
         HOOK.with(|c| *c.borrow_mut() = Some(h));
     }
 
     /// Gỡ hook + đặt lại bộ đếm (ca test gọi ở cuối để không ảnh hưởng ca khác cùng luồng).
-    pub(crate) fn go() {
+    pub fn go() {
         HOOK.with(|c| *c.borrow_mut() = None);
         DEM.with(|d| d.set(0));
     }
 
     /// Số lần điểm chèn **đã chạy** trên luồng hiện tại; `0` = **không chạy được điểm chèn**.
-    pub(crate) fn so_lan() -> usize {
+    pub fn so_lan() -> usize {
         DEM.with(Cell::get)
     }
 
     /// **Điểm chèn**: gọi hook (nếu có) với `(sau, p)`. No-op khi chưa đăng ký ⇒ **không** đổi hành vi.
-    pub(crate) fn chay(sau: &Path, p: &str) {
+    pub fn chay(sau: &Path, p: &str) {
         if HOOK.with(|c| c.borrow().is_none()) {
             return;
         }

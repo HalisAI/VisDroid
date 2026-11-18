@@ -10,8 +10,8 @@ mod audit_span;
 mod quyen_st174;
 
 // Các module dùng chung nằm trong lib (`lib.rs`) — bin và `vis-ffi` dùng chung một pipeline.
-use vis_cli::{cache, cli, fsmock, json_esc, lsp, modules, ngoai, pkg, quyen, vistest};
-use vis_cli::{dong_chan_doan, xuat_stdout};
+use vis_cli::{cache, cli, fsmock, lsp, modules, ngoai, pkg, quyen, vistest};
+use vis_cli::{xuat_stdout};
 
 use vis_diag::{all_codes, lookup_str, severity_label, Lang};
 use vis_syntax::Mode;
@@ -128,8 +128,10 @@ impl HostFs {
     }
 }
 
+
+
 /// `vis run [--tap] <tệp.vis> [-- args…]` — parse → lower → check → interp (ST-14).
-pub(crate) fn run_run(rest: &[String]) -> ExitCode {
+pub fn run_run(rest: &[String]) -> ExitCode {
     let mut tap = false;
     let mut dung_vm = false;
     let mut dump = false;
@@ -287,22 +289,33 @@ pub(crate) fn run_run(rest: &[String]) -> ExitCode {
     if dump_deps {
         eprint!("{}", modules::dump_deps(&loaded));
     }
+    // **VD-216 (VD-212, 2026-11-18)**: `VS0111` chết — bỏ bộ lọc chết. Mọi `Severity::Warning`
+    // khác (`VS0208`, …) **in** nhưng **không** làm đỏ; `VS0107` (tab) vẫn đỏ (VD-12).
+    let mem = |d: &(String, vis_syntax::Diagnostic)| {
+        d.1.code.severity == vis_diag::Severity::Warning && d.1.code.short != "VS0107"
+    };
+    let loi: Vec<&(String, vis_syntax::Diagnostic)> =
+        loaded.diags.iter().filter(|x| !mem(x)).collect();
     if !loaded.diags.is_empty() {
         for (rel, d) in &loaded.diags {
+            let nhan = if d.code.severity == vis_diag::Severity::Warning && d.code.short != "VS0107"
+            {
+                "warning"
+            } else {
+                "error"
+            };
             eprintln!(
-                "{rel}:{}:{}: error {}: {}",
+                "{rel}:{}:{}: {nhan} {}: {}",
                 d.line, d.col, d.code.short, d.message
             );
         }
-        if tap {
-            let ma = loaded
-                .diags
-                .first()
-                .map(|(_, d)| d.code.short)
-                .unwrap_or("VS0201");
-            eprintln!("not ok 1 - {} ({ma})", tep);
+        if !loi.is_empty() {
+            if tap {
+                let ma = loi.first().map(|(_, d)| d.code.short).unwrap_or("VS0201");
+                eprintln!("not ok 1 - {} ({ma})", tep);
+            }
+            return ExitCode::from(2);
         }
-        return ExitCode::from(2);
     }
     // **ST-130 (VD-124)**: chương trình **dùng gói** (`use pkg.*`) ⇒ strict-caps **mặc định** bật;
     // thoát bằng `--no-strict-caps` (một dòng cảnh báo ra **stderr**, không ra stdout).

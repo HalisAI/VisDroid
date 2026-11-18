@@ -49,3 +49,7 @@ app.*.map.json
 native/ViScript/target/
 *.iml
 test/goldens/
+
+# Engine Rust — artifact build local (không commit)
+native/ViScript/target/
+native/ViScript/.cargo/

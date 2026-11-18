@@ -12,18 +12,22 @@
 //
 // **SỬA KÈM LÝ DO (ST-120b)**: danh sách là **số dòng** trong tài liệu, nên 4 dòng trỏ
 // `> Mức hiện thực VS2: …` (Phụ lục B của quyết định đợt 23) làm 4 mục dịch xuống:
-// 610→614, 662→666, 737→745, 1412→1420. **Nội dung 7 khối không đổi** (vẫn đúng 7 khối
+// 610→614, 662→666, 737→745, 1412→1420. **R12a (VD-178)**: +1 dòng ở §3.2 (`type Email(str)`)
+// ⇒ dịch +1: 305→306, 432→433, 445→446, 614→615, 666→667, 745→746, 1420→1421.
+// **VD-215 (2026-11-18)**: +12 dòng bảng quy tắc `{…}` sau bảng kiểu ⇒ dịch +12:
+// 306→318, 435→447, 448→460, 617→629, 669→681, 748→760.
+// **Nội dung 7 khối không đổi** (vẫn đúng 7 khối
 // `...`/`Entry`/`assert`); chỉ toạ độ đổi. Đây là hệ quả của việc sửa tài liệu, không phải
 // nới ngưỡng: tổng số khối vẫn phải đúng 22 và mỗi khối vẫn phải `not ok` đúng 1 chẩn đoán.
-// Lý do từng khối (bản đầy đủ): khối 305 `for i in 0..10: ...`; 432 `fn max_by[...] -> T?: ...`;
-// 445 `fn show(self) -> str: ...`; 614 `pub cmd ls(...): ...`; 666 `extern cmd git(..., ...rest: str)`;
-// 745 `fn main(...): ...`; 1420 `Entry(trường: …)` (constructor có trường tên không có trong §A.3)
+// Lý do từng khối (bản đầy đủ): khối 318 `for i in 0..10: ...`; 447 `fn max_by[...] -> T?: ...`;
+// 460 `fn show(self) -> str: ...`; 629 `pub cmd ls(...): ...`; 681 `extern cmd git(..., ...rest: str)`;
+// 760 `fn main(...): ...`; 1435 `Entry(trường: …)` (constructor có trường tên không có trong §A.3)
 // + `assert xs == [3, 2, 1]` (không có trong §A.1/A.2) — hai lỗ hổng tài liệu, không tự thêm cú pháp.
 //
 // `#[allow(dead_code)]`: mỗi tệp test chỉ dùng **một phần** danh sách (vis-syntax dùng bản 6 khối,
 // ba tệp còn lại dùng bản 7 khối) nên mục không dùng ở tệp này là mục dùng ở tệp khác.
 #[allow(dead_code)]
-const DOC_EXCLUDED: [usize; 7] = [305, 432, 445, 614, 666, 745, 1420];
+const DOC_EXCLUDED: [usize; 6] = [318, 447, 460, 629, 681, 760];
 
 /// Vị trí khối `666` trong `DOC_EXCLUDED` — khối **duy nhất** không bị vis-syntax loại trừ.
 #[allow(dead_code)]
@@ -33,8 +37,8 @@ const VI_TRI_KHOI_666: usize = 4;
 /// (`extern cmd git(…, ...rest: str)`) **parse sạch** từ ST-27 vì variadic đã có.
 /// Dẫn xuất từ `DOC_EXCLUDED`, không chép số.
 #[allow(dead_code)]
-const DOC_EXCLUDED_SYNTAX: [usize; 6] = {
-    let mut out = [0usize; 6];
+const DOC_EXCLUDED_SYNTAX: [usize; 5] = {
+    let mut out = [0usize; 5];
     let mut j = 0;
     let mut i = 0;
     while i < DOC_EXCLUDED.len() {

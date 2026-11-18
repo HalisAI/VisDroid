@@ -1,4 +1,8 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
+<p align="center">
+  <img src="resources/brand/viscript-icon.svg" alt="ViScript" width="104" height="104">
+</p>
+
 # ViScript
 
 **Ngôn ngữ lập trình dễ học cho người Việt.**
@@ -201,7 +205,7 @@ print(dien_tich(Hinh.Vuong(3.0)))
 ```vis
 let ds = [10, 20, 30]
 let o = ds.get(1)          # some(20)
-if let v = o:
+if let Some(v) = o:
     print("có {v}")
 else:
     print("không có")
@@ -213,7 +217,7 @@ có 20
 -1
 ```
 
-> `int?` là "int hoặc không có". `??` là giá trị thay thế khi không có. `if let` lấy giá trị ra an toàn.
+> `int?` là "int hoặc không có". `??` là giá trị thay thế khi không có. `if let Some(v) = o:` lấy giá trị ra an toàn — **phải viết pattern** (`Some(v)`), dạng `if let v = o:` là lỗi.
 
 ### 11. Xử lý lỗi (Result)
 
@@ -274,14 +278,71 @@ print(p.hien())
 
 > `trait` giống interface: khai báo "làm được gì", `impl` viết "làm thế nào". Không có kế thừa.
 
+### 14. Mẹo mới — viết nhanh hơn
+
+```vis
+type User:
+    name: str
+    age: int = 0
+
+type Id = int
+type Email(str)
+
+enum Shape:
+    Circle(float), Empty
+
+fn cong(a: int, b: int) -> int:
+    a + b
+
+fn main():
+    # `/` luôn ra float; `//` chia lấy phần nguyên; `%` khớp `//` (không âm)
+    print(7 / 2)      # 3.5
+    print(7 // 2)     # 3
+    print(-7 % 2)     # 1
+
+    # `let` che tên được trong cùng phạm vi
+    let x = 1
+    let x = "a"
+    print(x)          # a
+
+    # đối số có tên + trường bản ghi có mặc định
+    print(cong(1, b: 5))      # 6
+    print(User(name: "An"))   # User(name: An, age: 0)
+
+    # `type X = T` (thay `alias`), `type Email(str)` (thay `newtype`)
+    let e = Email("a@b")
+    let Email(s) = e
+    print(s)          # a@b
+
+    # enum mang dữ liệu vị trí + nhiều biến thể cùng dòng
+    print(Shape.Circle(2.0))   # Circle(2)
+
+    # `xs[i]?` — chỉ số an toàn, trả `T?` thay vì panic
+    let xs = [10, 20, 30]
+    print(xs[9]?)     # None
+
+    # `if let` phải có pattern
+    let o: int? = Some(5)
+    if let Some(v) = o:
+        print(v)      # 5
+
+    # `let … else` — thoát sớm khi lỗi
+    let r: Result[int, str] = Err("hong")
+    let y = r else err:
+        return
+    print(y)
+```
+
+> Đây là các cải tiến của **pha 1 công thái học** (R3, R5a, R6, R7, R8, R11, R12a, R16, R17) — mỗi cái đều có ca test trong `test/sem/`.
+
 ## Bẫy thường gặp (đọc trước khi viết)
 
 | Bẫy | Cách đúng |
 |---|---|
 | `let` là **bất biến** — gán lại là lỗi | Muốn đổi giá trị thì dùng `var` |
-| `"a" + "b"` là **lỗi kiểu** | Nối bằng nội suy: `"{a}{b}"` |
-| `print(a, b)` là **lỗi** (hiện tại) | `print("{a} {b}")` — R6 sẽ cho nhiều đối số |
-| Đặt biến tên `ok`, `err`, `some`, `none` | Trùng tên hàm dựng — đổi tên khác (`dung`, `loi`, …) |
+| `"a" + "b"` **nối** được (từ R6) | `"a" + "b"` ⇒ `ab`; hoặc nội suy `"{a}{b}"` |
+| `print(a, b)` in **cách nhau 1 dấu cách** (từ R6) | `print("a", "b")` ⇒ `a b`; `print()` ⇒ dòng trống |
+| Đặt biến tên `Ok`, `Err`, `Some`, `None` | Trùng tên hàm dựng — đổi tên khác (`dung`, `loi`, …) |
 | `match` thiếu nhánh | Phải xét **hết** mọi trường hợp, hoặc thêm `_` |
 | `ds[5]` ngoài phạm vi | Kiểm tra `.len()` trước, hoặc dùng `.get(5)` trả `int?` |
 | `1 < x < 10` | Viết `1 < x and x < 10` |
@@ -301,9 +362,13 @@ print(p.hien())
 | Bản ghi | `type U:` + `{...}` | `@dataclass` | `struct U { }` |
 | Enum | `enum S:` + `S.Variant(...)` | `Enum` | `enum S { }` |
 | Match | `match x:` | `match x:` | `match x { }` |
-| Thiếu giá trị | `int?` / `none` / `??` | `int \| None` | `Option<i64>` |
+| Thiếu giá trị | `int?` / `None` / `??` | `int \| None` | `Option<i64>` |
 | Lỗi | `Result[T, E]` / `?` | `try/except` | `Result<T, E>` |
 | Đơn vị | `1kb + 1kib` | — | — |
+| Nối chuỗi | `"a" + "b"` | `"a" + "b"` | `format!("{a}{b}")` |
+| In nhiều giá trị | `print("a", "b")` | `print("a", "b")` | `println!("{} {}", a, b);` |
+| Định dạng số | `"{x:.2}"` | `f"{x:.2f}"` | `format!("{x:.2}")` |
+| Rỗng? | `xs.is_empty()` | `not xs` | `xs.is_empty()` |
 
 **Nếu bạn đã biết Python**: ViScript giống ở thụt lề, `for … in`, `elif`; khác ở chỗ có kiểu tĩnh, không có `class`, và không có `try/catch`.
 
@@ -508,7 +573,7 @@ bai.vis:3:7: error VS0412: toán tử `+`: `str` và `str` không cùng kiểu/�
 
 Gõ `./vis explain VS0412` để xem nghĩa của mã lỗi (có tiếng Việt, English, 日本語).
 
-> **ĐANG LÀM (R9)**: mỗi mã lỗi một nghĩa, kèm gợi ý sửa ngay tại chỗ.
+> **ĐÃ CÓ (R9)**: mỗi mã lỗi một nghĩa, kèm gợi ý sửa ngay tại chỗ.
 
 ## Trạng thái ngôn ngữ
 
@@ -520,9 +585,16 @@ ViScript đang phát triển. Mọi ví dụ trên đều **chạy được ở 
 | Optional, Result, `?`, `else` | ✅ ĐÃ CÓ |
 | Đơn vị đo | ✅ ĐÃ CÓ (cách in sẽ đổi theo R10) |
 | Thư viện chuẩn (fs, json, http, net…) | ✅ ĐÃ CÓ (API đóng băng) |
-| `str + str`, `print(a, b)`, format `{x:.2}` | 🔜 ĐANG LÀM (R6) |
-| `if let Some(v) = o:` (pattern) | 🔜 ĐANG LÀM (R3) |
-| `/` ra float, `//` chia nguyên | 🔜 ĐANG LÀM (R7) |
+| `str + str`, `print(a, b)`, format `{x:.2}`, `p"…"` | ✅ ĐÃ CÓ (R6) |
+| `if let Some(v) = o:` (pattern) | ✅ ĐÃ CÓ (R3a) |
+| `let x = r else:` | ✅ ĐÃ CÓ (R3b) |
+| `/` ra float, `//` chia nguyên, `%` khớp `//` | ✅ ĐÃ CÓ (R7) |
+| `xs[i]?` chỉ số an toàn | ✅ ĐÃ CÓ (R8) |
+| `enum Shape: Circle(float), Empty` + `U(n: 1)` | ✅ ĐÃ CÓ (R11) |
+| `type X = T`, `type Email(str)` | ✅ ĐÃ CÓ (R12a) |
+| `let` che tên cùng phạm vi | ✅ ĐÃ CÓ (R16) |
+| `if xs:` ⇒ gợi ý `xs.is_empty()` | ✅ ĐÃ CÓ (R17) |
+| `f(1, b: 5)` đối số có tên | ✅ ĐÃ CÓ (R5a) |
 | Method người dùng (`impl P:`) | 🔜 DỰ KIẾN (R14) |
 | `.lazy()` iterator | 🔜 DỰ KIẾN (R24) |
 | Windows hỗ trợ đầy đủ | 🔜 VS3 |
@@ -558,6 +630,7 @@ test/      bộ kiểm: ví dụ chạy được, fixture, báo cáo
 docs/      đặc tả ngôn ngữ (SPEC-lex.md) và thiết kế
 vi-du/     ví dụ chạy được cho người mới
 agent/     sổ quyết định, QUEUE, nhật ký, báo cáo từng đợt
+resources/ tài nguyên thương hiệu: icon ViScript + ViShell (brand/)
 ```
 
 ## Góp ý / phát triển
@@ -569,3 +642,6 @@ agent/     sổ quyết định, QUEUE, nhật ký, báo cáo từng đợt
 ## Giấy phép
 
 MIT OR Apache-2.0 — dùng, sửa, chia sẻ tự do.
+
+Logo, wordmark và tài nguyên thương hiệu trong [`resources/brand/`](resources/brand/) **không** thuộc
+phạm vi hai giấy phép đó — xem [`TRADEMARKS.md`](TRADEMARKS.md).

@@ -30,7 +30,7 @@ Quy ước: "scalar" = Unicode scalar value; mọi offset tính bằng byte, c�
 | `SIZE` | `INT` + `b\|kb\|mb\|gb\|tb\|kib\|mib\|gib\|tib` **không cách** | `5kb` | `kb`=1000, `kib`=1024 |
 | `DURATION` | `INT` + `ns\|us\|ms\|s\|m\|h\|d\|w`, ghép **giảm dần** không cách | `250ms`, `2h30m` | `2h30m` = **một** token |
 | `PERCENT` | `(INT | FLOAT)` + `pct` | `50pct`, `12.5pct` | **không còn** `50%` |
-| `PUNCT` | `( ) [ ] { } , : . .. ..= ; -> => = == != < <= > >= + - * / % ** & \| \|> ? ?. ?? ! @ # ## ^ ~ \\` | | xem §5 |
+| `PUNCT` | `( ) [ ] { } , : . .. ..= ; -> => = == != < <= > >= + - * / // % ** & \| \|> ? ?. ?? ! @ # ## ^ ~ \\` | | xem §5 |
 | `NEWLINE` | `\n` (chuẩn hoá CRLF→LF) | | trong ngoặc bị nuốt theo §4 |
 | `INDENT`/`DEDENT` | theo §4 | | |
 | `EOF` | hết tệp | | sinh DEDENT còn lại |
@@ -110,6 +110,7 @@ Metachar: khoảng trắng, `( ) [ ] { } ; & $ ' " \|`; `#` khi đứng đầu t
 | VS0108 | nội suy `{` không đóng |
 | VS0109 | thụt lề không khớp đơn vị/DEDENT sai |
 | VS0110 | `^` sai ngữ cảnh (lexer chế độ lệnh biết đầu stage) |
+| VS0111 | tên biến thể nên viết **hoa** chữ đầu (`Some`/`None`/`Ok`/`Err`) — **ngừng phát từ VD-212** (sai hoa thường trong pattern nay báo `VS0203`) |
 
 Mọi mã có `vis explain VSxxxx`; bảng đầy đủ ở ST-02b.
 

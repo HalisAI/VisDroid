@@ -194,18 +194,14 @@ fn snapshot_9_ca_so_runtime_05xx() {
         (
             501,
             Lang::Vi,
-            "lỗi runtime: phép toán hoặc tính năng chưa hỗ trợ ở VS0",
+            "lỗi runtime: phép toán hoặc tính năng chưa hỗ trợ",
         ),
         (
             501,
             Lang::En,
-            "runtime error: operation or feature not supported in VS0",
+            "runtime error: operation or feature not supported",
         ),
-        (
-            501,
-            Lang::Ja,
-            "実行時エラー: VS0 では未対応の演算または機能です",
-        ),
+        (501, Lang::Ja, "実行時エラー: 未対応の演算または機能です"),
         (502, Lang::Vi, "chia hoặc lấy dư cho 0"),
         (502, Lang::En, "division or remainder by zero"),
         (502, Lang::Ja, "0 による除算または剰余"),
@@ -446,20 +442,50 @@ fn snapshot_9_ca_so_module_07xx() {
         );
     }
     // **SỬA KÈM LÝ DO (ST-128, VD-125)**: +**VS0704** (không giải được ràng buộc gói) ⇒ 4 mã module.
-    assert_eq!(vis_diag::MODULE_CODES.len(), 4);
+    // **R9 (VD-178)**: +**VS0705**/**VS0706**/**VS0707** ⇒ **7** mã module.
+    assert_eq!(vis_diag::MODULE_CODES.len(), 7);
     assert_eq!(vis_diag::BOOKS.len(), 7, "ST-25: bảy sổ mã");
     // **SỬA KÈM LÝ DO (ST-50, Agent 0: VS0605 sai sổ — trường là lỗi kiểu)**: `VS0605` đổi tên
     // thành **VS0405**, chuyển sang sổ `04xx` ⇒ `06xx` **4**, `04xx` **5**; `all_codes()` **vẫn 29**
     // (đổi tên, không thêm mã); `BOOKS` vẫn 7; `next_block()` vẫn **801**.
-    assert_eq!(vis_diag::COMMAND_CODES.len(), 4, "ST-50: 06xx còn 4 mã");
+    // **R9 (VD-178)**: 06xx 4 → **6** (VS0605/0606), 04xx 5 → **9** (VS0413..0416).
+    assert_eq!(vis_diag::COMMAND_CODES.len(), 6, "R9: 06xx có 6 mã");
     assert_eq!(
         vis_diag::TYPE_CODES.len(),
-        5,
-        "ST-50: 04xx có 5 mã (thêm VS0405)"
+        9,
+        "R9: 04xx có 9 mã (VS0405 + VS0412..0416)"
     );
     // **SỬA KÈM LÝ DO (ST-60)**: +**VS0506** (lỗi thân tác vụ `async`) ⇒ **30** mã.
     // **SỬA KÈM LÝ DO (ST-61)**: +**VS0504**/**VS0505** (kênh) ⇒ **32** mã.
     // **SỬA KÈM LÝ DO (ST-128, VD-125)**: +**VS0704** (resolver không giải được ràng buộc) ⇒ **33** mã.
-    assert_eq!(vis_diag::all_codes().count(), 33);
+    // **R9 (VD-178)**: +16 mã ⇒ **49** mã.
+    // **R1a (VD-178)**: +**VS0111** (cảnh báo chữ hoa biến thể) ⇒ **50** mã.
+    // **VD-215 (2026-11-18)**: +**VS0207** (trộn khoá, lỗi) +**VS0208** (danh sách làm khoá, cảnh báo) ⇒ **52** mã.
+    assert_eq!(vis_diag::all_codes().count(), 52);
     assert_eq!(vis_diag::next_block(), 801, "khối kế tiếp là 08xx");
+}
+
+/// **P0 (VD-170) mục 2**: không thông điệp nào trong sổ mã còn **nhãn** `VS0`.
+///
+/// Mã `VS0xxx` (ví dụ `VS0201`) vẫn hợp lệ — chỉ cấm chữ `VS0` **không** đi kèm chữ số
+/// (nhãn phiên bản cũ "ở VS0", "trong VS0", "VS0 では…").
+#[test]
+fn khong_thong_diep_nao_con_nhan_vs0() {
+    fn co_nhan_vs0(s: &str) -> bool {
+        let mut rest = s;
+        while let Some(pos) = rest.find("VS0") {
+            let after = rest[pos + 3..].chars().next();
+            if !after.is_some_and(|c| c.is_ascii_digit()) {
+                return true;
+            }
+            rest = &rest[pos + 3..];
+        }
+        false
+    }
+    for c in all_codes() {
+        for lang in [Lang::Vi, Lang::En, Lang::Ja] {
+            let m = c.message(lang);
+            assert!(!co_nhan_vs0(m), "{} {:?} còn nhãn VS0: {m}", c.short, lang);
+        }
+    }
 }

@@ -63,7 +63,7 @@ fn chan_0_literal_bi_tu_choi() {
         "c0",
         "fn main():\n    let c = chan[int](0)\n    let _ = c.send(1)\n",
     );
-    assert_eq!(a.0, 1, "{:?}", a);
+    assert_eq!(a.0, 101, "R9/C1: lỗi chạy có mã ⇒ 101: {:?}", a);
     let e = &a.2;
     assert!(e.contains("VS0505") && e.contains("capacity 0"), "{e}");
     assert!(dt < Duration::from_secs(5), "treo {dt:?}");
@@ -79,7 +79,7 @@ fn chan_0_dong_runtime_vs0505() {
         "cd",
         "fn main():\n    let n = 0\n    let c = chan[int](n)\n    let _ = c.send(1)\n",
     );
-    assert_eq!(a.0, 1, "{:?}", a);
+    assert_eq!(a.0, 101, "R9/C1: lỗi chạy có mã ⇒ 101: {:?}", a);
     let e = &a.2;
     assert!(e.contains("VS0505") && e.contains("capacity 0"), "{e}");
     assert!(dt < Duration::from_secs(5), "treo {dt:?}");
@@ -95,7 +95,7 @@ fn chan_0_trong_ham_cung_chan() {
         "h",
         "fn mo() -> int:\n    let c = chan[int](0)\n    0\n\nfn main():\n    print(mo())\n",
     );
-    assert_eq!(a.0, 1, "{a:?}");
+    assert_eq!(a.0, 101, "R9/C1: lỗi chạy có mã ⇒ 101: {a:?}");
     assert!(
         a.2.contains("VS0505") && a.2.contains("capacity 0"),
         "{}",
@@ -118,7 +118,7 @@ fn chan_0_do_thoi_gian_khong_treo() {
     let _ = std::fs::remove_dir_all(&d);
 }
 
-/// (5) `recv` **sau close** ⇒ `none` (cả hai đường, byte y hệt).
+/// (5) `recv` **sau close** ⇒ `None` (cả hai đường, byte y hệt).
 #[test]
 fn recv_sau_close_none() {
     let d = tam("recv");
@@ -128,7 +128,7 @@ fn recv_sau_close_none() {
         "fn main():\n    let c = chan[int](1)\n    c.close()\n    print(c.recv())\n    print(c.recv())\n",
     );
     assert_eq!(a.0, 0, "{:?}", a);
-    assert_eq!(a.1, b"none\nnone\n");
+    assert_eq!(a.1, b"None\nNone\n");
     let _ = std::fs::remove_dir_all(&d);
 }
 
@@ -141,7 +141,7 @@ fn send_sau_close_vs0504() {
         "s",
         "fn main():\n    let c = chan[int](1)\n    c.close()\n    let _ = c.send(1)\n",
     );
-    assert_eq!(a.0, 1, "{:?}", a);
+    assert_eq!(a.0, 101, "R9/C1: lỗi chạy có mã ⇒ 101: {:?}", a);
     assert!(a.2.contains("VS0504"));
     let _ = std::fs::remove_dir_all(&d);
 }
@@ -155,7 +155,7 @@ fn recv_rong_khong_task_vs0505() {
         "e",
         "fn main():\n    let c = chan[int](1)\n    print(c.recv())\n",
     );
-    assert_eq!(a.0, 1, "{:?}", a);
+    assert_eq!(a.0, 101, "R9/C1: lỗi chạy có mã ⇒ 101: {:?}", a);
     assert!(a.2.contains("VS0505"));
     assert!(dt < Duration::from_secs(5), "treo {dt:?}");
     let _ = std::fs::remove_dir_all(&d);
@@ -182,9 +182,9 @@ fn drain_task_loi_vs0506() {
     let (a, _) = ca(
         &d,
         "l",
-        "async fn hong() -> int:\n    1 / 0\n\nlet t = spawn hong()\nprint(\"main\")\n",
+        "async fn hong() -> int:\n    1 // 0\n\nlet t = spawn hong()\nprint(\"main\")\n",
     );
-    assert_eq!(a.0, 1, "{:?}", a);
+    assert_eq!(a.0, 101, "R9/C1: lỗi chạy có mã ⇒ 101: {:?}", a);
     assert!(a.2.contains("VS0506"));
     let _ = std::fs::remove_dir_all(&d);
 }

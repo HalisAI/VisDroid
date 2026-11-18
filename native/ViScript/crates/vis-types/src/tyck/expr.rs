@@ -163,56 +163,7 @@ impl<'a> Checker<'a> {
                     Type::Opt(Box::new(t))
                 }
             },
-            HExpr::Try { expr, span } => {
-                let t = self.kiem_expr(expr);
-                match t {
-                    Type::Opt(inner) => {
-                        // ST-12b BLOCKER #1 (§4.4): `T?` chỉ dùng `?` khi hàm trả `U?`.
-                        if self.try_hop_le(true) {
-                            (*inner).clone()
-                        } else {
-                            self.diag(
-                                MISMATCH,
-                                format!(
-                                    "`?` trên `{}` chỉ dùng được khi hàm trả `{}?`, hàm này trả `{}` (§4.4)",
-                                    self.show(&Type::Opt(inner.clone())),
-                                    self.show(&inner),
-                                    self.show(&self.ham_tra())
-                                ),
-                                *span,
-                            );
-                            Type::Error
-                        }
-                    }
-                    Type::Result(inner, _) => {
-                        if self.try_hop_le(false) {
-                            (*inner).clone()
-                        } else {
-                            self.diag(
-                                MISMATCH,
-                                format!(
-                                    "`?` trên `Result` chỉ dùng được khi hàm trả `Result[…, …]`, hàm này trả `{}` (§4.4)",
-                                    self.show(&self.ham_tra())
-                                ),
-                                *span,
-                            );
-                            Type::Error
-                        }
-                    }
-                    Type::Error => Type::Error,
-                    other => {
-                        self.diag(
-                            MISMATCH,
-                            format!(
-                                "`?` chỉ dùng cho `T?`/`Result`, được `{}`",
-                                self.show(&other)
-                            ),
-                            *span,
-                        );
-                        Type::Error
-                    }
-                }
-            }
+            HExpr::Try { expr, span } => super::expr::phu::kiem_try(self, expr, *span),
             HExpr::With { base, fields, span } => {
                 let bt = self.kiem_expr(base);
                 match bt {
@@ -404,11 +355,7 @@ impl<'a> Checker<'a> {
             }
             // ST-14: chuỗi nội suy — kiểm **từng** phần biểu thức, kiểu của cả chuỗi là `str`.
             HExpr::Interp { parts, .. } => {
-                for p in parts {
-                    if let crate::hir::InterpPart::Expr(e) = p {
-                        self.kiem_expr(e);
-                    }
-                }
+                super::expr::phu::kiem_interp(self, parts);
                 Type::Str
             }
             HExpr::CmdBlock { .. } | HExpr::Error { .. } => Type::Error,
@@ -424,19 +371,22 @@ impl<'a> Checker<'a> {
         match cond {
             HCond::Expr(e) => {
                 let t = self.kiem_expr(e);
-                self.coerce(&t, &Type::Bool, e.span(), "điều kiện `if`");
+                self.coerce_cond(e, &t, "điều kiện `if`");
             }
             HCond::Let { pat, value, .. } => {
                 let vt = self.kiem_expr(value);
-                let inner = match &vt {
-                    Type::Opt(i) => (**i).clone(),
-                    Type::Error => Type::Error,
-                    other => {
-                        // `if let` trên giá trị không optional: vẫn cho, coi như kiểu đó.
-                        other.clone()
-                    }
-                };
-                self.bind_pat(pat, &inner);
+                // **R3a (VD-178)**: `if let` nhận **pattern** kiểm theo **kiểu đầy đủ** (`T?`),
+                // không bóc sẵn — `if let Some(v) = o:` mới đúng; `if let v = o:` (luôn khớp) ⇒ lỗi.
+                if matches!(pat, crate::hir::HPat::Bind { .. })
+                    && matches!(vt, Type::Opt(_) | Type::Result(..))
+                {
+                    self.diag(
+                        MISMATCH,
+                        "`if let` cần **pattern** — dùng `if let Some(v) = o:` (hoặc `Ok(v)`/`Err(e)`)",
+                        pat.span(),
+                    );
+                }
+                self.bind_pat(pat, &vt);
             }
         }
     }
@@ -489,14 +439,16 @@ impl<'a> Checker<'a> {
             | BinOp::Sub
             | BinOp::Mul
             | BinOp::Div
+            | BinOp::FloorDiv
             | BinOp::Rem
             | BinOp::Pow
             | BinOp::Range
             | BinOp::RangeIncl => match num::so_hoc(op, l, r, l_lit, r_lit) {
                 Some(t) => t,
                 None => {
+                    // **R9 (VD-178)**: toán tử không hỗ trợ cho kiểu ⇒ `VS0414` (tách khỏi `VS0412`).
                     self.diag(
-                        MISMATCH,
+                        super::TOAN_TU,
                         format!(
                             "toán tử `{}`: `{}` và `{}` không cùng kiểu/đơn vị",
                             op.text(),
@@ -665,6 +617,10 @@ impl<'a> Checker<'a> {
             if let Some(t) = self.kiem_method(&recv, name, args, span) {
                 return t;
             }
+            // **R5c (VD-178)**: `x.f(a) ≡ std.<mod>.f(x, a)` — tham số đầu có kiểu của `x`.
+            if let Some(t) = super::expr::phu::kiem_std_method(self, &recv, name, args, span) {
+                return t;
+            }
         }
         // Hàm **khai trong tệp**: dùng chữ ký đầy đủ (có tên + mặc định).
         let sig = match callee {
@@ -805,23 +761,15 @@ impl<'a> Checker<'a> {
         for (n, a) in named {
             let t = self.kiem_expr(a);
             match sig.params.iter().find(|p| &p.0 == n) {
-                Some(p) if p.3 => {
-                    // ST-12b MAJOR #5: `--tên` chỉ dùng cho tham số **khai `--`**, và không lặp.
+                // **R5a (VD-178)**: `f(1, b: 5)` — đối số **có tên** khớp tham số theo **tên**.
+                Some(p) => {
                     if da_gap.contains(&n.as_str()) {
-                        self.diag(ARG_COUNT, format!("đối số tên `--{n}` bị lặp"), a.span());
+                        self.diag(ARG_COUNT, format!("đối số tên `{n}` bị lặp"), a.span());
                     }
                     da_gap.push(n);
                     let want = p.1.clone();
                     self.coerce_e(a, &t, &want, "đối số có tên");
                 }
-                Some(_) => self.diag(
-                    ARG_COUNT,
-                    format!(
-                        "`{n}` là tham số **vị trí** của `{}` — không truyền bằng `--{n}` (§A.3)",
-                        sig.name
-                    ),
-                    a.span(),
-                ),
                 None => self.diag(
                     ARG_COUNT,
                     format!("hàm `{}` không có tham số tên `{n}`", sig.name),
@@ -915,6 +863,42 @@ impl<'a> Checker<'a> {
                         }
                         Type::List(Box::new(e))
                     }
+                    // **R20b (VD-178)**: `enumerate`/`any`/`all`/`find`.
+                    "enumerate" => {
+                        self.arity(args, 0, name, span);
+                        Type::List(Box::new(Type::TypeRef {
+                            name: "tuple".into(),
+                            args: vec![Type::Int, e],
+                        }))
+                    }
+                    "any" | "all" => {
+                        self.arity(args, 1, name, span);
+                        if let Some(Type::Fn(params, ret)) = arg_tys.first() {
+                            if params.len() != 1 {
+                                self.diag(
+                                    MISMATCH,
+                                    format!("`{name}` cần hàm **1 tham số**"),
+                                    span,
+                                );
+                            }
+                            if !matches!(**ret, Type::Bool | Type::Error) {
+                                self.diag(MISMATCH, format!("`{name}` cần hàm trả `bool`"), span);
+                            }
+                        }
+                        Type::Bool
+                    }
+                    "find" => {
+                        self.arity(args, 1, name, span);
+                        if let Some(Type::Fn(params, ret)) = arg_tys.first() {
+                            if params.len() != 1 {
+                                self.diag(MISMATCH, "`find` cần hàm **1 tham số**", span);
+                            }
+                            if !matches!(**ret, Type::Bool | Type::Error) {
+                                self.diag(MISMATCH, "`find` cần hàm trả `bool`", span);
+                            }
+                        }
+                        Type::Opt(Box::new(e))
+                    }
                     "each" => {
                         self.arity(args, 1, name, span);
                         // ST-13b (mục 6): `each` phải nhận **hàm 1 tham số**.
@@ -941,6 +925,8 @@ impl<'a> Checker<'a> {
                         }
                         Type::Unit
                     }
+                    // **R17 (VD-178)**: `is_empty()` cho list/map/str — gợi ý của điều kiện.
+                    "is_empty" => phu::is_empty(self, args, name, span),
                     "sum" => {
                         self.arity(args, 0, name, span);
                         // ST-13b (mục 6): `sum` chỉ trên list **số**.
@@ -963,16 +949,8 @@ impl<'a> Checker<'a> {
                         self.arg_ty(&arg_tys, 0, &Type::Str, name, args, span);
                         Type::Str
                     }
-                    _ => {
-                        self.diag(
-                            NO_FIELD,
-                            format!(
-                                "`list` không có phương thức `{name}` (ST-13: len get first last push map filter each sum join)"
-                            ),
-                            span,
-                        );
-                        Type::Error
-                    }
+                    // **R5c (VD-178)**: thử `std.list.<name>` trước khi báo lỗi.
+                    _ => return None,
                 }
             }
             Type::Str => match name {
@@ -984,6 +962,7 @@ impl<'a> Checker<'a> {
                     self.arity(args, 0, name, span);
                     Type::Str
                 }
+                "is_empty" => phu::is_empty(self, args, name, span),
                 "chars" => {
                     self.arity(args, 0, name, span);
                     Type::List(Box::new(Type::Str))
@@ -998,14 +977,8 @@ impl<'a> Checker<'a> {
                     self.arg_ty(&arg_tys, 0, &Type::Str, name, args, span);
                     Type::List(Box::new(Type::Str))
                 }
-                _ => {
-                    self.diag(
-                        NO_FIELD,
-                        format!("`str` không có phương thức `{name}` (ST-13: len upper lower split chars contains)"),
-                        span,
-                    );
-                    Type::Error
-                }
+                // **R5c (VD-178)**: thử `std.str.<name>` trước khi báo lỗi.
+                _ => return None,
             },
             Type::Map(k, v) => {
                 let kk = (**k).clone();
@@ -1025,6 +998,7 @@ impl<'a> Checker<'a> {
                         self.arg_ty(&arg_tys, 0, &kk, name, args, span);
                         Type::Bool
                     }
+                    "is_empty" => phu::is_empty(self, args, name, span),
                     "keys" => {
                         self.arity(args, 0, name, span);
                         Type::List(Box::new(kk))
@@ -1033,14 +1007,8 @@ impl<'a> Checker<'a> {
                         self.arity(args, 0, name, span);
                         Type::List(Box::new(vv))
                     }
-                    _ => {
-                        self.diag(
-                            NO_FIELD,
-                            format!("`map` không có phương thức `{name}` (ST-13: len get has keys values)"),
-                            span,
-                        );
-                        Type::Error
-                    }
+                    // **R5c (VD-178)**: thử `std.map.<name>` trước khi báo lỗi.
+                    _ => return None,
                 }
             }
             _ => return None,
@@ -1302,19 +1270,15 @@ impl<'a> Checker<'a> {
         match name {
             "print" => {
                 // **ST-72 (VD-106 (1))**: `cap` chỉ dùng làm tham số — không in được.
-                if la_cap(&t0()) {
-                    self.diag(
-                        MISMATCH,
-                        format!("`cap` không in được (`{}`)", self.show(&t0())),
-                        span,
-                    );
-                }
-                if !arity(1) {
-                    self.diag(
-                        ARG_COUNT,
-                        format!("`print` cần 1 đối số, được {}", args.len()),
-                        span,
-                    );
+                // **R6d (VD-178)**: `print(a, b, …)` hợp lệ (cách nhau 1 dấu cách); `print()` ⇒ `\n`.
+                for t in &tys {
+                    if la_cap(t) {
+                        self.diag(
+                            MISMATCH,
+                            format!("`cap` không in được (`{}`)", self.show(t)),
+                            span,
+                        );
+                    }
                 }
                 Some(Type::Unit)
             }

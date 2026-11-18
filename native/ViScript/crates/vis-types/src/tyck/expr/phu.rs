@@ -37,3 +37,184 @@ pub(super) fn builtin_value_ty(name: &str) -> Type {
         _ => Type::Error,
     }
 }
+
+/// **R6c (VD-178)**: kiểm `{expr:spec}` — kiểu biểu thức + spec (`.N`, N ≤ 17).
+pub(super) fn kiem_expr_spec(c: &mut super::super::Checker, expr: &crate::hir::HExpr, spec: &str) {
+    let t = c.kiem_expr(expr);
+    if !matches!(t, Type::Int | Type::Float | Type::Str | Type::Error) {
+        c.diag(
+            super::super::MISMATCH,
+            format!(
+                "`{{…:{spec}}}` chỉ định dạng được `int`/`float`/`str`, được `{}`",
+                c.show(&t)
+            ),
+            expr.span(),
+        );
+    }
+    if !spec_hop_le(spec) {
+        c.diag(
+            super::super::MISMATCH,
+            format!("format spec `{spec}` chưa hỗ trợ — dùng `.N` (N chữ số thập phân)"),
+            expr.span(),
+        );
+    }
+}
+
+/// Spec hợp lệ — `.N` với `N` 0..=17 (chữ số thập phân).
+fn spec_hop_le(spec: &str) -> bool {
+    let Some(n) = spec.strip_prefix('.') else {
+        return false;
+    };
+    !n.is_empty()
+        && n.len() <= 2
+        && n.chars().all(|c| c.is_ascii_digit())
+        && n.parse::<u8>().map(|v| v <= 17).unwrap_or(false)
+}
+
+/// **R6c (VD-178)**: kiểm **từng** mảnh của chuỗi nội suy (ST-14 + `{expr:spec}`).
+pub(super) fn kiem_interp(c: &mut super::super::Checker, parts: &[crate::hir::InterpPart]) {
+    for p in parts {
+        match p {
+            crate::hir::InterpPart::Expr(e) => {
+                c.kiem_expr(e);
+            }
+            crate::hir::InterpPart::ExprSpec { expr, spec } => kiem_expr_spec(c, expr, spec),
+            crate::hir::InterpPart::Str(_) => {}
+        }
+    }
+}
+
+/// **R17 (VD-178)**: `is_empty()` — 0 đối số, trả `bool` (list/map/str).
+pub(super) fn is_empty(
+    c: &mut super::super::Checker,
+    args: &[crate::hir::HExpr],
+    name: &str,
+    span: vis_syntax::Span,
+) -> Type {
+    c.arity(args, 0, name, span);
+    Type::Bool
+}
+
+/// **R8 (VD-178)**: `xs[i]?` — chỉ số **có kiểm tra** ⇒ `T?` (không cần hàm trả `T?`).
+pub(super) fn kiem_index_opt(
+    c: &mut super::super::Checker,
+    base: &crate::hir::HExpr,
+    index: &crate::hir::HExpr,
+    span: vis_syntax::Span,
+) -> Type {
+    let bt = c.kiem_expr(base);
+    // **R8-fix (VD-178)**: chỉ số phải đúng kiểu — `int` cho `list`/`bytes`, `K` cho `map[K, V]`.
+    let it = c.kiem_expr(index);
+    let khoa = match &bt {
+        Type::Map(k, _) => (**k).clone(),
+        _ => Type::Int,
+    };
+    c.coerce_e(index, &it, &khoa, "chỉ số");
+    let elem = match &bt {
+        Type::List(e) => (**e).clone(),
+        Type::Bytes => Type::Int,
+        Type::Map(_, v) => (**v).clone(),
+        Type::Error => Type::Error,
+        other => {
+            let o = other.clone();
+            c.diag(
+                super::super::MISMATCH,
+                format!("`xs[i]?` cần `list`/`map`/`bytes`, được `{}`", c.show(&o)),
+                span,
+            );
+            Type::Error
+        }
+    };
+    Type::Opt(Box::new(elem))
+}
+
+/// **R8 (VD-178) + §4.4**: `?` — `xs[i]?` là chỉ số có kiểm tra; còn lại đòi hàm trả `T?`/`Result`.
+pub(super) fn kiem_try(
+    c: &mut super::super::Checker,
+    expr: &crate::hir::HExpr,
+    span: vis_syntax::Span,
+) -> Type {
+    if let crate::hir::HExpr::Index { base, index, .. } = expr {
+        return kiem_index_opt(c, base, index, span);
+    }
+    let t = c.kiem_expr(expr);
+    match t {
+        Type::Opt(inner) => {
+            if c.try_hop_le(true) {
+                (*inner).clone()
+            } else {
+                c.diag(
+                    super::super::MISMATCH,
+                    format!(
+                        "`?` trên `{}` chỉ dùng được khi hàm trả `{}?`, hàm này trả `{}` (§4.4)",
+                        c.show(&Type::Opt(inner.clone())),
+                        c.show(&inner),
+                        c.show(&c.ham_tra())
+                    ),
+                    span,
+                );
+                Type::Error
+            }
+        }
+        Type::Result(inner, _) => {
+            if c.try_hop_le(false) {
+                (*inner).clone()
+            } else {
+                c.diag(
+                    super::super::MISMATCH,
+                    format!(
+                        "`?` trên `Result` chỉ dùng được khi hàm trả `Result[…, …]`, hàm này trả `{}` (§4.4)",
+                        c.show(&c.ham_tra())
+                    ),
+                    span,
+                );
+                Type::Error
+            }
+        }
+        Type::Error => Type::Error,
+        other => {
+            c.diag(
+                super::super::MISMATCH,
+                format!("`?` chỉ dùng cho `T?`/`Result`, được `{}`", c.show(&other)),
+                span,
+            );
+            Type::Error
+        }
+    }
+}
+
+/// **R5c (VD-178)**: `x.f(a) ≡ std.<mod>.f(x, a)` khi **tham số đầu** của `f` có kiểu của `x`.
+pub(super) fn kiem_std_method(
+    c: &mut super::super::Checker,
+    recv: &Type,
+    name: &str,
+    args: &[crate::hir::HExpr],
+    span: vis_syntax::Span,
+) -> Option<Type> {
+    let m = match recv {
+        Type::Str => "str",
+        Type::List(_) => "list",
+        Type::Map(..) => "map",
+        _ => return None,
+    };
+    let full = format!("{m}.{name}");
+    let f = vis_types_stdlib_sig(&full)?;
+    let want = f.params.first()?.sang_type();
+    if !c.same(&want, recv) {
+        return None;
+    }
+    for (i, a) in args.iter().enumerate() {
+        let at = c.kiem_expr(a);
+        if let Some(p) = f.params.get(i + 1) {
+            let pt = p.sang_type();
+            c.coerce_e(a, &at, &pt, "đối số");
+        }
+    }
+    let _ = span;
+    Some(f.ret.sang_type())
+}
+
+/// Tách riêng để `phu.rs` không phải `use` cả crate `stdlib` ở đầu tệp.
+fn vis_types_stdlib_sig(name: &str) -> Option<&'static crate::stdlib::StdFn> {
+    crate::stdlib::sig_of(name)
+}

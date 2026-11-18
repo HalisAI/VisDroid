@@ -25,6 +25,8 @@ pub const TASK_ERR: &Code = &RUNTIME_CODES[5];
 pub const SEND_CLOSED: &Code = &RUNTIME_CODES[3];
 /// **ST-61 (VD-96)** — `VS0505`: deadlock (kênh chặn, không còn tác vụ chạy được).
 pub const DEADLOCK: &Code = &RUNTIME_CODES[4];
+/// **R9 (VD-178)** — `VS0507`: tràn `i64` lúc chạy (tách khỏi `VS0501`).
+pub const OVERFLOW: &Code = &RUNTIME_CODES[6];
 /// `VS0412` — gán cho `let`/tham số (phòng thủ: tyck đã chặn trước).
 pub(crate) const MISMATCH: &Code = &TYPE_CODES[3];
 
@@ -287,9 +289,44 @@ impl<'a> Interp<'a> {
     fn exec_stmt(&mut self, s: &HStmt) -> R<Ctrl> {
         self.steps += 1;
         match s {
-            HStmt::Let { pat, init, .. } => {
+            HStmt::Let {
+                pat, init, else_, ..
+            } => {
                 let v = self.eval(init)?;
-                self.bind_pat(pat, &v);
+                // **R3b (VD-178)**: `let x = r else:` — bóc `Ok`/`Some`; ngược lại chạy khối `else`.
+                if let Some(e) = else_ {
+                    match v {
+                        Value::Enum(ea, va, _) if ea == "Option" && va == "None" => {
+                            return self.exec_block(&e.body);
+                        }
+                        Value::Enum(ea, va, ag)
+                            if ea == "Result" && va == "Ok" && ag.len() == 1 =>
+                        {
+                            let mut ag = ag;
+                            self.bind_pat(pat, &ag.pop().expect("Ok luôn có một đối số"))
+                        }
+                        Value::Enum(ea, va, ag)
+                            if ea == "Option" && va == "Some" && ag.len() == 1 =>
+                        {
+                            let mut ag = ag;
+                            self.bind_pat(pat, &ag.pop().expect("Some luôn có một đối số"))
+                        }
+                        Value::Enum(ea, va, ag)
+                            if ea == "Result" && va == "Err" && ag.len() == 1 =>
+                        {
+                            let mut ag = ag;
+                            if let Some(sym) = e.bind_sym {
+                                self.env
+                                    .borrow_mut()
+                                    .insert(sym, ag.pop().expect("Err luôn có một đối số"));
+                            }
+                            return self.exec_block(&e.body);
+                        }
+                        other => self.bind_pat(pat, &other),
+                    }
+                } else {
+                    self.bind_pat(pat, &v);
+                }
                 Ok(Ctrl::Normal)
             }
             HStmt::Var { sym, init, .. } => {
@@ -361,6 +398,8 @@ impl<'a> Interp<'a> {
                             AssignOp::Sub => BinOp::Sub,
                             AssignOp::Mul => BinOp::Mul,
                             AssignOp::Div => BinOp::Div,
+                            // **R7 (VD-178)**: `//=` — chia lấy phần nguyên.
+                            AssignOp::FloorDiv => BinOp::FloorDiv,
                             _ => BinOp::Rem,
                         };
                         crate::builtin::bin(bop, cur, rhs, *span)?
@@ -482,7 +521,7 @@ impl<'a> Interp<'a> {
                 if self.loop_depth == 0 {
                     return Err(Abort::Trap(Trap::new(
                         RT,
-                        "`break` ngoài vòng lặp (VS0 chỉ dùng trong `for`/`while`/`loop`)",
+                        "`break` ngoài vòng lặp (chỉ dùng trong `for`/`while`/`loop`)",
                         s.span(),
                     )));
                 }
@@ -524,10 +563,17 @@ impl<'a> Interp<'a> {
             }
             HCond::Let { pat, value, .. } => {
                 let v = self.eval(value)?;
-                let target = match &v {
-                    Value::Opt(Some(x)) => (**x).clone(),
-                    Value::Opt(None) => return Ok(false),
-                    other => other.clone(),
+                // `if let Some(x) = o:` — `None` ⇒ nhánh sai; giá trị khác được khớp **theo pattern**.
+                let target = match v {
+                    Value::Enum(ea, va, ag) if ea == "Option" => match va.as_str() {
+                        "None" => return Ok(false),
+                        "Some" if ag.len() == 1 => {
+                            let mut ag = ag;
+                            ag.pop().expect("Some luôn có một đối số")
+                        }
+                        _ => Value::Enum(ea, va, ag),
+                    },
+                    other => other,
                 };
                 let snapshot = self.env.borrow().clone();
                 if !self.bind_pat_bool(pat, &target) {
@@ -573,6 +619,10 @@ impl<'a> Interp<'a> {
                     // `print`/`len`/`str`/`Ok`/... **có** `sym` (ST-11 khai 8 tên dựng sẵn) ⇒ tra tên.
                     if self.symbols.kind_of(*id) == Some(vis_types::lower::SymKind::Builtin) {
                         let n = self.symbols.name_of(*id).unwrap_or_default();
+                        // **R2a (VD-178)**: `None` là **biến thể** của `Option`, không phải hàm.
+                        if n == "None" {
+                            return Ok(Value::none());
+                        }
                         if let Some(b) = builtin_name(n) {
                             return Ok(Value::Builtin(b));
                         }
@@ -584,6 +634,8 @@ impl<'a> Interp<'a> {
                     )))
                 }
                 None => match builtin_name(name) {
+                    // **R2a (VD-178)**: `None` là **biến thể** của `Option`, không phải hàm.
+                    Some("None") => Ok(Value::none()),
                     Some(b) => Ok(Value::Builtin(b)),
                     None => Err(Abort::Trap(Trap::new(
                         RT,
@@ -595,10 +647,13 @@ impl<'a> Interp<'a> {
             HExpr::Bin { op, lhs, rhs, span } => match op {
                 BinOp::Coalesce => {
                     let l = self.eval(lhs)?;
-                    match l {
-                        Value::Opt(Some(v)) => Ok(*v),
-                        Value::Opt(None) => self.eval(rhs),
-                        other => Ok(other),
+                    if l.is_some() {
+                        Ok(l.into_some().expect("vừa kiểm is_some"))
+                    } else if l.is_none() {
+                        self.eval(rhs)
+                    } else {
+                        // Không phải `Option` — `??` chỉ trên `T?`; giữ nguyên hành vi cũ (giá trị thô).
+                        Ok(l)
                     }
                 }
                 BinOp::And => {
@@ -649,8 +704,16 @@ impl<'a> Interp<'a> {
                 let b = self.eval(base)?;
                 let b = if *optional {
                     match b {
-                        Value::Opt(None) => return Ok(Value::Opt(None)),
-                        Value::Opt(Some(x)) => *x,
+                        // **VD-204 (1)**: enum `Option` thật — `None` ⇒ `None`; `Some(v)` ⇒ bóc `v`;
+                        // giá trị khác (không phải `Option`) đi thẳng như cũ.
+                        Value::Enum(ea, va, ag) if ea == "Option" => match va.as_str() {
+                            "None" => return Ok(Value::none()),
+                            "Some" if ag.len() == 1 => {
+                                let mut ag = ag;
+                                ag.pop().expect("Some luôn có một đối số")
+                            }
+                            _ => Value::Enum(ea, va, ag),
+                        },
                         other => other,
                     }
                 } else {
@@ -720,10 +783,10 @@ impl<'a> Interp<'a> {
                 Ok(Value::Enum(name, variant.clone(), vs))
             }
             HExpr::Opt { value, .. } => match value {
-                None => Ok(Value::Opt(None)),
+                None => Ok(Value::none()),
                 Some(v) => {
                     let inner = self.eval(v)?;
-                    Ok(Value::Opt(Some(Box::new(inner))))
+                    Ok(Value::some(inner))
                 }
             },
             HExpr::Try { expr, .. } if self.fn_depth == 0 => {
@@ -734,11 +797,43 @@ impl<'a> Interp<'a> {
                     e.span(),
                 )))
             }
+            // **R8 (VD-178)**: `xs[i]?` — chỉ số **có kiểm tra** ⇒ `T?` (không panic).
+            HExpr::Try { expr, .. } if matches!(&**expr, HExpr::Index { .. }) => {
+                let HExpr::Index { base, index, .. } = &**expr else {
+                    unreachable!()
+                };
+                let b = self.eval(base)?;
+                let i = self.eval(index)?;
+                Ok(match (&b, &i) {
+                    (Value::List(xs), Value::Int(n)) if *n >= 0 => {
+                        Value::opt(xs.get(*n as usize).cloned())
+                    }
+                    (Value::Bytes(bs), Value::Int(n)) if *n >= 0 => {
+                        Value::opt(bs.get(*n as usize).map(|x| Value::Int(*x as i64)))
+                    }
+                    (Value::Map(kv), k) => Value::opt(
+                        kv.iter()
+                            .find(|(kk, _)| kk.eq_value(k))
+                            .map(|(_, v)| v.clone()),
+                    ),
+                    _ => Value::none(),
+                })
+            }
             HExpr::Try { expr, .. } => match self.eval(expr)? {
-                Value::Opt(Some(v)) => Ok(*v),
-                Value::Opt(None) => Err(Abort::Ret(Value::Opt(None))),
-                Value::Res(Ok(v)) => Ok(*v),
-                Value::Res(Err(e)) => Err(Abort::Ret(Value::Res(Err(e)))),
+                // **VD-204 (1)**: `Option`/`Result` thật — `?` bóc `Some(v)`/`Ok(v)`, đẩy `None`/`Err(e)`
+                // về làm giá trị trả sớm; `?` trên kiểu khác ⇒ lỗi như cũ.
+                Value::Enum(ea, va, ag) if ea == "Option" && va == "Some" && ag.len() == 1 => {
+                    Ok(ag.into_iter().next().expect("Some luôn có một đối số"))
+                }
+                Value::Enum(ea, va, ag) if ea == "Option" && va == "None" => {
+                    Err(Abort::Ret(Value::Enum(ea, va, ag)))
+                }
+                Value::Enum(ea, va, ag) if ea == "Result" && va == "Ok" && ag.len() == 1 => {
+                    Ok(ag.into_iter().next().expect("Ok luôn có một đối số"))
+                }
+                Value::Enum(ea, va, ag) if ea == "Result" && va == "Err" && ag.len() == 1 => {
+                    Err(Abort::Ret(Value::Enum(ea, va, ag)))
+                }
                 other => Err(Abort::Trap(Trap::new(
                     RT,
                     format!("`?` cần `T?`/`Result`, được `{}`", other.show()),
@@ -893,6 +988,11 @@ impl<'a> Interp<'a> {
                             let v = self.eval(e)?;
                             out.push_str(&v.show());
                         }
+                        // **R6c (VD-178)**: `{expr:spec}` — định dạng lúc chạy.
+                        vis_types::InterpPart::ExprSpec { expr, spec } => {
+                            let v = self.eval(expr)?;
+                            out.push_str(&dinh_dang(&v, spec, expr.span())?);
+                        }
                     }
                 }
                 Ok(Value::Str(out))
@@ -984,7 +1084,7 @@ impl<'a> Interp<'a> {
             }
             HExpr::Field { .. } | HExpr::Index { .. } => Err(Abort::Trap(Trap::new(
                 RT,
-                "gán vào trường/phần tử chưa hỗ trợ ở VS0 (dùng `with` cho bản ghi)",
+                "gán vào trường/phần tử chưa hỗ trợ (dùng `with` cho bản ghi)",
                 span,
             ))),
             _ => Err(Abort::Trap(Trap::new(RT, "đích gán không hợp lệ", span))),
@@ -1004,6 +1104,12 @@ impl<'a> Interp<'a> {
                         span,
                     ))
                 }),
+            // **VD-204 (1)**: `Some(v)` không có trường; truy cập trường lên `Option`
+            // bóc `Some(v)` rồi lấy trường của `v` (tương thích hành vi cũ với `Value::Opt`).
+            Value::Enum(ea, va, args) if ea == "Option" && va == "Some" && args.len() == 1 => {
+                let mut args = args;
+                self.field_of(args.pop().expect("Some luôn có một đối số"), name, span)
+            }
             Value::Enum(en, variant, args) => {
                 if variant == name {
                     Ok(Value::Enum(en, variant, args))
@@ -1018,7 +1124,6 @@ impl<'a> Interp<'a> {
                     )))
                 }
             }
-            Value::Opt(Some(x)) => self.field_of(*x, name, span),
             other => Err(Abort::Trap(Trap::new(
                 RT,
                 format!("`{}` không có trường `{name}`", other.show()),
@@ -1136,7 +1241,8 @@ pub fn lit_value(lit: &Lit) -> std::result::Result<Value, String> {
         LitKind::Bytes => parse_bytes_lit(&lit.text)
             .map(Value::Bytes)
             .ok_or_else(|| format!("literal bytes không đọc được: `{}`", lit.text)),
-        LitKind::Path => Ok(Value::Path(parse_str_lit(&lit.text, false))),
+        // **R6a (VD-178)**: `p"…"` **không** escape (đường dẫn Windows).
+        LitKind::Path => Ok(Value::Path(parse_str_lit(&lit.text, true))),
         LitKind::Size => parse_size(&lit.text)
             .map(Value::Size)
             .ok_or_else(|| format!("literal size không đọc được: `{}`", lit.text)),
@@ -1235,8 +1341,9 @@ impl Value {
     pub fn truthy(&self, span: Span) -> R<bool> {
         match self {
             Value::Bool(b) => Ok(*b),
-            Value::Opt(None) => Ok(false),
-            Value::Opt(Some(_)) => Ok(true),
+            Value::Enum(ea, va, ag) if ea == "Option" => {
+                Ok(matches!((va.as_str(), ag.len()), ("Some", 1)))
+            }
             other => Err(Abort::Trap(Trap::new(
                 RT,
                 format!("điều kiện cần `bool`, được `{}`", other.show()),
@@ -1244,4 +1351,28 @@ impl Value {
             ))),
         }
     }
+}
+
+/// **R6c (VD-178)**: định dạng `{expr:spec}` — hiện hỗ trợ `.N` (N chữ số thập phân).
+pub fn dinh_dang(v: &Value, spec: &str, span: Span) -> Result<String, Abort> {
+    let Some(n) = spec.strip_prefix('.') else {
+        return Err(Abort::Trap(Trap::new(
+            RT,
+            format!("format spec `{spec}` chưa hỗ trợ — dùng `.N`"),
+            span,
+        )));
+    };
+    let n: usize = n.parse().map_err(|_| {
+        Abort::Trap(Trap::new(
+            RT,
+            format!("format spec `{spec}` chưa hỗ trợ — dùng `.N`"),
+            span,
+        ))
+    })?;
+    Ok(match v {
+        Value::Float(f) => format!("{f:.n$}"),
+        Value::Int(i) => format!("{:.n$}", *i as f64),
+        Value::Str(s) => s.clone(),
+        other => other.show(),
+    })
 }

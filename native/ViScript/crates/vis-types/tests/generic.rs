@@ -84,7 +84,7 @@ fn tham_so_long_list_t_sach() {
 #[test]
 fn tham_so_map_str_t_sach() {
     sach(
-        "fn lay[T](m: map[str, T], k: str) -> T?:\n    none\n\nfn main() -> ():\n    let x: int? = lay({\"a\": 1}, \"a\")\n    print(x)\n",
+        "fn lay[T](m: map[str, T], k: str) -> T?:\n    None\n\nfn main() -> ():\n    let x: int? = lay({\"a\": 1}, \"a\")\n    print(x)\n",
     );
 }
 
@@ -182,7 +182,7 @@ fn tra_t_sai_ngu_canh_la_vs0412() {
 
 #[test]
 fn tra_t_optional_voi_match() {
-    sach("fn tim[T](xs: list[T]) -> T?:\n    none\n\nfn main() -> ():\n    match tim([1, 2]):\n        some(v): print(v)\n        none: print(\"khong\")\n");
+    sach("fn tim[T](xs: list[T]) -> T?:\n    None\n\nfn main() -> ():\n    match tim([1, 2]):\n        Some(v): print(v)\n        None: print(\"khong\")\n");
 }
 
 #[test]
@@ -226,10 +226,11 @@ fn enum_generic_payload_khong_bi_khoa_kieu() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn kieu_tham_so_la_van_la_vs0301() {
+fn kieu_tham_so_la_van_la_vs0303() {
+    // **R9 (VD-178)**: kiểu không tồn tại ⇒ `VS0303` (tách khỏi `VS0301` tên giá trị).
     co(
         "fn f[T](x: U) -> int:\n    0\n\nfn main() -> ():\n    print(f(1))\n",
-        "VS0301",
+        "VS0303",
     );
 }
 

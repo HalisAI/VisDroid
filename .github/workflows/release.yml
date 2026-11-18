@@ -45,6 +45,26 @@ jobs:
         run: |
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;27.0.12077973"
 
+      # Rust + target Android: build lại libvis_ffi.so từ native/ViScript
+      # (fork đã đồng bộ upstream) trước khi đóng gói APK.
+      - name: Install Rust (Android targets)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android, armv7-linux-androideabi, x86_64-linux-android
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            native/ViScript/target
+          key: cargo-build-${{ runner.os }}-${{ hashFiles('native/ViScript/Cargo.lock') }}
+          restore-keys: cargo-build-${{ runner.os }}-
+
+      - name: Build libvis_ffi.so (3 ABI)
+        run: ./native/build-so.sh all
+
       # -v để log hiển thị tiến độ từng task gradle (sửa xong vấn đề chậm thì bỏ).
       - name: Build APK
         run: flutter build apk --release -v

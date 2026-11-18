@@ -94,12 +94,18 @@ fn kiem(ten: &str, cases: &[(&str, &str)]) {
 const SO_HOC: &[(&str, &str)] = &[
     // kỳ vọng: out("3\n")
     ("print(1 + 2)", "out(\"3\\n\")"),
+    // **R7 (VD-178)**: `/` **luôn** `float` ⇒ `7/2` = `3.5`.
+    // kỳ vọng: out("3.5\n")
+    ("print(7 / 2)", "out(\"3.5\\n\")"),
+    // kỳ vọng: out("-3.5\n")
+    ("print(-7 / 2)", "out(\"-3.5\\n\")"),
+    // **R7 (VD-178)**: `%` khớp `//` — phần dư **không âm** ⇒ `-7 % 2` = `1`.
+    // kỳ vọng: out("1\n")
+    ("print(-7 % 2)", "out(\"1\\n\")"),
     // kỳ vọng: out("3\n")
-    ("print(7 / 2)", "out(\"3\\n\")"),
-    // kỳ vọng: out("-3\n")
-    ("print(-7 / 2)", "out(\"-3\\n\")"),
-    // kỳ vọng: out("-1\n")
-    ("print(-7 % 2)", "out(\"-1\\n\")"),
+    ("print(7 // 2)", "out(\"3\\n\")"),
+    // kỳ vọng: out("-4\n")
+    ("print(-7 // 2)", "out(\"-4\\n\")"),
     // kỳ vọng: out("1024\n")
     ("print(2 ** 10)", "out(\"1024\\n\")"),
     // kỳ vọng: out("512\n")
@@ -122,8 +128,8 @@ const SO_HOC: &[(&str, &str)] = &[
     ("print(1 % 0)", "!VS0502"),
     // kỳ vọng: !VS0501 — mũ âm
     ("print(2 ** -1)", "!VS0501"),
-    // kỳ vọng: !VS0501 — tràn i64
-    ("print(9223372036854775807 + 1)", "!VS0501"),
+    // kỳ vọng: !VS0507 — tràn i64 (R9/VD-178: tách khỏi VS0501)
+    ("print(9223372036854775807 + 1)", "!VS0507"),
     // kỳ vọng: out("false\n")
     ("print(true and false)", "out(\"false\\n\")"),
     // kỳ vọng: out("true\n")
@@ -326,15 +332,15 @@ const KIEU: &[(&str, &str)] = &[
         "enum E:\n    A\n    B\nlet x: E = E.A\nmatch x:\n    A | B: print(\"cả hai\")",
         "out(\"cả hai\\n\")",
     ),
-    // kỳ vọng: out("0\n") — `T?` + match some/none
+    // kỳ vọng: out("0\n") — `T?` + match Some/None
     (
-        "let x: int? = none\nmatch x:\n    some(v): print(v)\n    none: print(0)",
+        "let x: int? = None\nmatch x:\n    Some(v): print(v)\n    None: print(0)",
         "out(\"0\\n\")",
     ),
     // kỳ vọng: out("5\n") — `??` trên `some`
     ("let x: int? = 5\nprint(x ?? 0)", "out(\"5\\n\")"),
-    // kỳ vọng: out("7\n") — `??` trên `none`
-    ("let y: int? = none\nprint(y ?? 7)", "out(\"7\\n\")"),
+    // kỳ vọng: out("7\n") — `??` trên `None`
+    ("let y: int? = None\nprint(y ?? 7)", "out(\"7\\n\")"),
     // kỳ vọng: out("âm\n") — `?` trên Result (trả sớm `Err`)
     (
         "fn f(n: int) -> Result[int, str]:\n    let r = if n > 0: Ok(n) else: Err(\"âm\")\n    r\nfn g(n: int) -> Result[int, str]:\n    let v = f(n)?\n    Ok(v * 2)\nmatch g(-1):\n    Ok(x): print(x)\n    Err(e): print(e)",
@@ -435,7 +441,8 @@ fn chan_doan_runtime_co_dong_cot_that() {
 /// (pipeline thật chặn ở tyck bằng `VS0403`) — kiểm hành vi của riêng interp.
 #[test]
 fn phuong_thuc_ngoai_tap_bao_vs0501() {
-    let src = "let xs = [1]\nprint(xs.sort())";
+    // **R5c (VD-178)**: `sort` **đã** thành phương thức (std.list.sort) ⇒ dùng tên **không có**.
+    let src = "let xs = [1]\nprint(xs.khong_co())";
     let p = parse(src, Mode::Script);
     let h = lower(&p.cst, &lex(src, Mode::Script));
     let out = run(src, &h.hir, &h.symbols, &h.types, &[]);

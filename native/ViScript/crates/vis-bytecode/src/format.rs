@@ -108,7 +108,7 @@ pub enum Instr {
     JumpIfFalse(i32),
     /// Nhảy nếu đỉnh **không truthy** nhưng **giữ** giá trị — 1→1 (cho `and`/`or`).
     JumpIfNotTrue(i32),
-    /// Nhảy nếu đỉnh là `none` (pop) — 1→0 (cho `??`).
+    /// Nhảy nếu đỉnh là `None` (pop) — 1→0 (cho `??`).
     JumpIfNone(i32),
     /// Nhảy nếu đỉnh là `some` (pop) — 1→0.
     JumpIfSome(i32),
@@ -130,7 +130,7 @@ pub enum Instr {
     MakeEnum(u32, u16),
     /// `some(v)` — 1→1.
     MakeSome,
-    /// `none` — 0→1.
+    /// `None` — 0→1.
     MakeNone,
     /// `ok(v)` — 1→1.
     MakeOk,
@@ -142,12 +142,16 @@ pub enum Instr {
     Field(u32),
     /// Chỉ số `base[i]` — 2→1.
     Index,
+    /// **R8 (VD-178)**: `xs[i]?` — chỉ số **có kiểm tra**, trả `T?` (2→1).
+    IndexOpt,
     /// Cập nhật `base[i] = v` (list/map) — 3→1.
     Set,
     /// `base with ten: v …` — base + `n` cặp tên/giá trị — 2n+1→1.
     With(u16),
     /// Nội suy chuỗi từ `n` mảnh (mảnh chữ là `Const`) — n→1.
     Interp(u16),
+    /// **R6c (VD-178)**: định dạng đỉnh ngăn xếp theo spec `consts[i]` (`.N`) — 1→1.
+    Format(u32),
     /// Khởi tạo vòng lặp trên đỉnh — 1→1.
     IterInit,
     /// Lấy phần tử kế: nhảy tới đích khi hết — 1→2 (giá trị + iterator mới).
@@ -166,7 +170,7 @@ pub enum Instr {
     TestRange(u32, u32, u8),
     /// Gán đỉnh vào ô `i` (**không** pop) — 1→1.
     BindLocal(u16),
-    /// `expr?` — lan truyền `err`/`none` — 1→1.
+    /// `expr?` — lan truyền `Err`/`None` — 1→1.
     Try,
     /// Nhân đôi giá trị đỉnh — 1→2 (dùng cho match/destructuring).
     Dup,
@@ -223,9 +227,11 @@ impl Instr {
             Instr::MakeClosure(..) => 28,
             Instr::Field(_) => 29,
             Instr::Index => 30,
+            Instr::IndexOpt => 54,
             Instr::Set => 31,
             Instr::With(_) => 32,
             Instr::Interp(_) => 33,
+            Instr::Format(_) => 53,
             Instr::IterInit => 34,
             Instr::IterNext(_) => 35,
             Instr::TestLit(_) => 36,
@@ -270,6 +276,7 @@ impl Instr {
             | Instr::MakeMap(_)
             | Instr::With(_)
             | Instr::Interp(_)
+            | Instr::Format(_)
             | Instr::TestTuple(_)
             | Instr::TestList(_)
             | Instr::BindLocal(_) => 2,
@@ -289,6 +296,7 @@ impl Instr {
             | Instr::MakeOk
             | Instr::MakeErr
             | Instr::Index
+            | Instr::IndexOpt
             | Instr::Set
             | Instr::IterInit
             | Instr::Try
@@ -307,7 +315,7 @@ impl Instr {
 ///
 /// Luật: **thêm** lệnh ⇒ thêm tên vào **cuối**; **không** đổi số, **không** đổi tên, **không** đổi
 /// nghĩa thẻ đã có. Đổi nghĩa ⇒ định dạng mới `VBC2` (VD-129).
-pub const TEN_THE: [&str; 53] = [
+pub const TEN_THE: [&str; 55] = [
     "Const",
     "LoadLocal",
     "StoreLocal",
@@ -361,6 +369,8 @@ pub const TEN_THE: [&str; 53] = [
     "BoolAnd",
     "Swap",
     "PushUnit",
+    "Format",
+    "IndexOpt",
 ];
 
 /// Số thẻ hiện có (`TEN_THE.len()`).
@@ -424,6 +434,7 @@ pub fn binop_tag(op: BinOp) -> u8 {
         BinOp::And => 15,
         BinOp::Or => 16,
         BinOp::Pipe => 17,
+        BinOp::FloorDiv => 18,
     }
 }
 
@@ -448,6 +459,7 @@ pub fn binop_from_tag(t: u8) -> Option<BinOp> {
         15 => BinOp::And,
         16 => BinOp::Or,
         17 => BinOp::Pipe,
+        18 => BinOp::FloorDiv,
         _ => return None,
     })
 }

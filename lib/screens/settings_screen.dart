@@ -10,7 +10,7 @@ import '../core/settings.dart';
 import '../core/vis_engine.dart';
 import 'cheatsheet_screen.dart';
 
-const String kAppVersion = '1.1.1';
+const String kAppVersion = '1.1.2';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key, required this.appState});

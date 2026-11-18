@@ -3,10 +3,10 @@
 //!
 //! Trích **tự động** mọi khối ```vis từ tài liệu (không chép tay). Theo **VD-36** (Agent 0):
 //! - Bộ fixture của ST-05 = **đúng 15 khối đủ thân** phải parse 0 lỗi + CST lossless;
-//! - **7 khối loại trừ tường minh** (6 khối `...` + 1 khối khối 1412) — QD §7.4 cấm `...` trong
-//!   fixture nên đó là ví dụ lược thân, không phải chương trình; khối 1412 hỏng vì **`Entry(trường:
-//!   …)`** (dòng 1429, constructor có trường tên **không có trong §A.3**) và **`assert`** (dòng
-//!   1438, không có trong §A.1/A.2) — hai lỗ hổng tài liệu ghi ở báo cáo R2, **không** tự thêm
+//! - **7 khối loại trừ tường minh** (6 khối `...` + 1 khối khối 1436-hint) — QD §7.4 cấm `...` trong
+//!   fixture nên đó là ví dụ lược thân, không phải chương trình; khối 1436 hỏng vì **`Entry(trường:
+//!   …)`** (dòng 1441, constructor có trường tên **không có trong §A.3**) và **`assert`** (dòng
+//!   1450, không có trong §A.1/A.2) — hai lỗ hổng tài liệu ghi ở báo cáo R2, **không** tự thêm
 //!   cú pháp (VD-08).
 //!
 //! Máy kiểm: đúng **22** khối ```vis, đúng **15** parse sạch, đúng **7** loại trừ; thêm/bớt là đỏ.
@@ -20,26 +20,23 @@ use vis_syntax::{parse, Mode};
 const TOTAL_VIS_BLOCKS: usize = 22;
 // **SỬA KÈM LÝ DO (ST-27)**: khối 662 (`extern cmd git(…, ...rest: str)`) nay parse **sạch**
 // vì variadic đã có ⇒ 16 khối đủ thân sạch, 6 khối loại trừ.
-const FULL_BODIED: usize = 16;
+const FULL_BODIED: usize = 17;
 
-// **Một nguồn duy nhất** (nợ #129, ST-158): 7 khối loại trừ theo VD-36 nằm ở
-// `test/doc_excluded.rs`; vis-syntax loại trừ **6** khối (`DOC_EXCLUDED_SYNTAX` = bản 7 khối
-// trừ khối 666 `extern cmd git(…, ...rest: str)` — khối này **parse sạch** từ ST-27 vì variadic
-// đã có, nên 16/22 khối đủ thân). Số dòng không chép lại ở đây; chỉ giữ **lý do** từng khối.
+// **Một nguồn duy nhất** (nợ #129, ST-158): 6 khối loại trừ theo VD-36 nằm ở
+// `test/doc_excluded.rs`; vis-syntax loại trừ **5** khối (`DOC_EXCLUDED_SYNTAX` = bản 6 khối
+// trừ khối 667 `extern cmd git(…, ...rest: str)` — khối này **parse sạch** từ ST-27 vì variadic
+// đã có, nên 17/22 khối đủ thân). Số dòng không chép lại ở đây; chỉ giữ **lý do** từng khối.
 include!("../../../test/doc_excluded.rs");
 
 const EXCLUDED_COUNT: usize = DOC_EXCLUDED_SYNTAX.len();
 
 /// Lý do loại trừ — **cùng thứ tự** với `DOC_EXCLUDED_SYNTAX` (số dòng lấy từ nguồn duy nhất).
 const LY_DO: [&str; EXCLUDED_COUNT] = [
-    "`...` ở 312-315 (`for i in 0..10: ...`) — QD §7.4 cấm `...` trong fixture, là ví dụ lược thân",
-    "`...` ở 436 (`fn max_by[...] -> T?: ...`) — thân lược, không phải chương trình",
-    "`...` ở 450 (`fn show(self) -> str: ...`) — thân lược",
-    "`...` ở 617 (`pub cmd ls(...): ...`) — thân lược",
-    "`...` ở 747 (`fn main(...): ...`) — thân lược",
-    "lỗi đầu: `Entry(path: str(e.path), size: …, modified: …)` ở 1437 — constructor có **trường tên** \
-     không có trong §A.3 (lỗ hổng 1); `assert xs == [3, 2, 1]` ở 1446 cũng không có trong §A.1/A.2 \
-     (lỗ hổng 2 của tài liệu) — VD-36, ghi ở báo cáo R2",
+    "`...` ở 324-327 (`for i in 0..10: ...`) — QD §7.4 cấm `...` trong fixture, là ví dụ lược thân",
+    "`...` ở 448 (`fn max_by[...] -> T?: ...`) — thân lược, không phải chương trình",
+    "`...` ở 462 (`fn show(self) -> str: ...`) — thân lược",
+    "`...` ở 629 (`pub cmd ls(...): ...`) — thân lược",
+    "`...` ở 760 (`fn main(...): ...`) — thân lược",
 ];
 
 /// Khối **loại trừ tường minh** — (dòng bắt đầu ```vis trong `ViScript-thiet-ke.md`, lý do);

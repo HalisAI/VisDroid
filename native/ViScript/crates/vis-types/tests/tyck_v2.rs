@@ -107,8 +107,8 @@ const NANG_FLOAT: &[(&str, &str)] = &[
     ("let x = 1\nlet y: float = x\ny", "!VS0412"),
     // kỳ vọng: !VS0412 — so sánh biến int với float
     ("let x = 1\nx == 1.5", "!VS0412"),
-    // kỳ vọng: !VS0412 — cộng biến int với float
-    ("let x = 1\nx + 1.5", "!VS0412"),
+    // kỳ vọng: !VS0414 — cộng biến int với float (R9: toán tử ⇒ VS0414)
+    ("let x = 1\nx + 1.5", "!VS0414"),
     // kỳ vọng: !VS0412 — trả biến int ở vị trí float
     ("fn f(x: int) -> float:\n    x\nf(1)", "!VS0412"),
 ];
@@ -138,8 +138,8 @@ const GAN: &[(&str, &str)] = &[
         "type U:\n    name: str\nlet u: U = {name: \"a\"}\nu.name = \"b\"",
         "!VS0412",
     ),
-    // kỳ vọng: !VS0412 — `let` bất biến
-    ("let xs = [1, 2]\nxs[0] = 3", "!VS0412"),
+    // kỳ vọng: !VS0413 — `let` bất biến (R9: gán bất biến ⇒ VS0413)
+    ("let xs = [1, 2]\nxs[0] = 3", "!VS0413"),
     // kỳ vọng: ok(list[int]) — `var` gán phần tử được
     ("var xs = [1, 2]\nxs[0] = 3\nxs", "ok(list[int])"),
     // kỳ vọng: ok(int) — `var` gán lại
@@ -150,10 +150,11 @@ const GAN: &[(&str, &str)] = &[
 
 /// (5) `--tên` cho tham số không khai `--` ⇒ `VS0401`.
 const TEN_THAM_SO: &[(&str, &str)] = &[
-    // kỳ vọng: !VS0401 — `a` là tham số **vị trí**, không nhận `--a`
+    // **R5a (VD-178)**: đối số **có tên** khớp tham số theo **tên** — `--a` cũng nhận.
+    // kỳ vọng: ok(int)
     (
         "fn f(a: int, --b: int = 1) -> int:\n    a + b\nf(1, --a: 2)",
-        "!VS0401",
+        "ok(int)",
     ),
     // kỳ vọng: !VS0401 — đối số tên **lặp**
     (
@@ -177,8 +178,8 @@ const PERCENT_FLOAT: &[(&str, &str)] = &[
     ("25pct < 0.3", "ok(bool)"),
     // kỳ vọng: ok(bool) — `0.5 < 50pct`
     ("0.5 < 50pct", "ok(bool)"),
-    // kỳ vọng: !VS0412 — cộng `percent` với `float` **không** được
-    ("50pct + 0.5", "!VS0412"),
+    // kỳ vọng: !VS0414 — cộng `percent` với `float` **không** được
+    ("50pct + 0.5", "!VS0414"),
 ];
 
 /// (7) `match` trên `unit`/tuple là **hữu hạn** — §4.3.
@@ -237,25 +238,28 @@ fn phep_cua_vs0_theo_vd48() {
     kiem("phép VS0", PHEP_VS0);
 }
 
-/// VD-48(a): kiểu ngoài VS0 vẫn `VS0301` **nhưng** thông điệp nêu "VS0/vis-std".
+/// VD-48(a): kiểu ngoài VS0 vẫn `VS0303` (R9: kiểu không tồn tại) **nhưng** thông điệp nêu "chưa hỗ trợ/vis-std".
+///
+/// **P0 (VD-170) mục 2**: bỏ nhãn `VS0` khỏi thông điệp ⇒ kỳ vọng đổi từ `contains("VS0")`
+/// sang `contains("chưa hỗ trợ")`; ý nghĩa ca (nêu rõ thuộc vis-std) **không đổi**.
 ///
 /// **SỬA KÈM LÝ DO (ST-72)**: bỏ ca `cap[Dir]` khỏi danh sách "kiểu ngoài VS0" — từ **VD-106**
 /// `cap[...]` là **kiểu thật** (nên `f(1)` báo `VS0412` sai kiểu, không phải `VS0301`). Hành vi đổi
 /// có chủ đích; không xoá ca (AnyError/Json vẫn khoá đường `VS0301`).
 #[test]
-fn kieu_ngoai_vs0_bao_vs0301_ro_rang() {
-    for src in ["let x: AnyError = none\nx", "let j: Json = none\nj"] {
+fn kieu_ngoai_vs0_bao_vs0303_ro_rang() {
+    for src in ["let x: AnyError = None\nx", "let j: Json = None\nj"] {
         let (out, _) = run(src);
         assert!(
-            !out.codes().is_empty() && out.codes().iter().all(|c| *c == "VS0301"),
-            "mọi chẩn đoán phải là VS0301: {:?}\nnguồn: {src}",
+            !out.codes().is_empty() && out.codes().iter().all(|c| *c == "VS0303"),
+            "mọi chẩn đoán phải là VS0303: {:?}\nnguồn: {src}",
             out.codes()
         );
         assert!(
             out.diags
                 .iter()
-                .any(|d| d.message.contains("VS0") && d.message.contains("vis-std")),
-            "phải có thông điệp nêu VS0/vis-std: {:?}\nnguồn: {src}",
+                .any(|d| d.message.contains("chưa hỗ trợ") && d.message.contains("vis-std")),
+            "phải có thông điệp nêu chưa hỗ trợ/vis-std: {:?}\nnguồn: {src}",
             out.diags
                 .iter()
                 .map(|d| d.message.clone())
@@ -294,9 +298,10 @@ const SINH_TU_DONG: &[(&str, &str)] = &[
     // kỳ vọng: ok(()) — duyệt chuỗi cho `char`
     ("for c in \"ab\":\n    print(c)", "ok(())"),
     // kỳ vọng: !VS0412 — `char + int`
-    ("for c in \"ab\":\n    print(c + 1)", "!VS0412"),
+    ("for c in \"ab\":\n    print(c + 1)", "!VS0414"),
     // kỳ vọng: !VS0412 — VS0 chỉ duyệt range `int`
-    ("for x in 1s..3s:\n    print(x)", "!VS0412"),
+    // **R9 (VD-178)**: range không `int` ⇒ `VS0416` (tách khỏi `VS0412`).
+    ("for x in 1s..3s:\n    print(x)", "!VS0416"),
 ];
 
 #[test]
@@ -325,7 +330,7 @@ fn gan_field_index_kiem_bat_bien() {
 }
 
 #[test]
-fn ten_tham_so_phai_khai_dau_hai_gach() {
+fn ten_tham_so_va_doi_so_co_ten() {
     kiem("tham số tên", TEN_THAM_SO);
 }
 
@@ -342,4 +347,27 @@ fn match_unit_tuple_la_huu_han() {
 #[test]
 fn phu_them_bieu_thuc_va_kieu() {
     kiem("phủ", PHU);
+}
+
+/// **R17 (VD-178)**: điều kiện `if`/`while` chỉ `bool`; list/map/str ⇒ gợi ý `.is_empty()`.
+#[test]
+fn dieu_kien_list_goi_y_is_empty() {
+    for src in [
+        "let xs = [1, 2]\nif xs:\n    print(1)\n",
+        "let xs = [1, 2]\nwhile xs:\n    print(1)\n",
+        "let m = {\"a\": 1}\nif m:\n    print(1)\n",
+        "if \"abc\":\n    print(1)\n",
+    ] {
+        let (out, _) = run(src);
+        assert!(
+            out.codes().contains(&"VS0412"),
+            "phải VS0412: {:?}\nnguồn: {src}",
+            out.codes()
+        );
+        assert!(
+            out.diags.iter().any(|d| d.message.contains("is_empty")),
+            "phải gợi ý `is_empty`: {:?}\nnguồn: {src}",
+            out.diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+        );
+    }
 }

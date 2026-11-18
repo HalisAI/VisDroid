@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //! Hạ **pattern** CST → [`HPat`] (ST-11) — phần đuôi của [`crate::lower`].
 //!
-//! §A.4: `pattern := or_pattern`; `_' | literal | '-' INT | 'none' | dotted_path | '(' … ')' |
+//! §A.4: `pattern := or_pattern`; `_' | literal | '-' INT | 'None' | ('none' đã bỏ — VS0203) | dotted_path | '(' … ')' |
 //! '[' … ']' | '{' … '}' | dotted_path '(' … ')'`. Phân biệt **bind** với **ctor** theo luật:
 //! tên viết hoa hoặc đã khai là biến thể ⇒ `HPat::Ctor`; còn lại ⇒ `HPat::Bind` (khai tên trong
 //! khung hiện tại). Or-pattern: các vế **dùng chung** binding nên vế sau không báo `VS0302`.
@@ -55,8 +55,27 @@ impl<'a> Lowerer<'a> {
             Kind::Ident if first.text == "_" => HPat::Wild { span },
             Kind::Ident => {
                 let name = first.text.clone();
+                // **VD-212 (A0)**: `some`/`ok`/`err` viết thường ⇒ **lỗi** `VS0203` (trước R1a là
+                // cảnh báo `VS0111`; A0 **PHỦ QUYẾT** dạng mềm — sai hoa thường phải là lỗi,
+                // gợi ý dạng đúng; `vis fmt` tự sửa trước khi biên dịch).
+                if matches!(name.as_str(), "some" | "ok" | "err") {
+                    let hoa = match name.as_str() {
+                        "some" => "Some",
+                        "ok" => "Ok",
+                        _ => "Err",
+                    };
+                    self.diag(
+                        &vis_diag::SYNTAX_CODES[2],
+                        format!("`{name}` không còn hợp lệ trong pattern — dùng `{hoa}`"),
+                        span,
+                    );
+                }
                 // `Ten(...)` — ctor có đối số (Kids = các pattern đối số).
                 if toks.len() >= 2 && toks[1].is_punct("(") {
+                    // **R12a (VD-178)**: `Email(s)` — newtype **trong suốt** ⇒ hạ thẳng pattern con.
+                    if self.newtypes.iter().any(|n| n == &name) && kids.len() == 1 {
+                        return self.lower_pat(kids[0]);
+                    }
                     let args = kids.iter().map(|a| self.lower_pat(a)).collect();
                     return HPat::Ctor {
                         path: vec![name],
@@ -83,11 +102,20 @@ impl<'a> Lowerer<'a> {
                     sym,
                 }
             }
-            Kind::Kw if first.text == "none" => HPat::Ctor {
-                path: vec!["none".into()],
-                args: Vec::new(),
-                span,
-            },
+            // **R2 (VD-178)**: từ khoá `none` đã **bỏ** — dùng `None` (`VS0203`); hạ vẫn khớp
+            // biến thể `None` để công cụ (fmt) sửa được và biên dịch hiểu ý nguồn.
+            Kind::Kw if first.text == "none" => {
+                self.diag(
+                    &vis_diag::SYNTAX_CODES[2],
+                    "`none` đã bỏ — dùng `None` (từ khoá đã bỏ, dùng biến thể `None` của `Option`)",
+                    span,
+                );
+                HPat::Ctor {
+                    path: vec!["None".into()],
+                    args: Vec::new(),
+                    span,
+                }
+            }
             Kind::Kw if first.text == "true" || first.text == "false" => HPat::Lit {
                 lit: Lit {
                     kind: LitKind::Bool,

@@ -397,6 +397,8 @@ pub enum AssignOp {
     Sub,
     Mul,
     Div,
+    /// **R7 (VD-178)**: `//` — chia lấy phần nguyên (làm tròn **xuống**).
+    FloorDiv,
     Rem,
 }
 
@@ -408,6 +410,7 @@ impl AssignOp {
             AssignOp::Sub => "-=",
             AssignOp::Mul => "*=",
             AssignOp::Div => "/=",
+            AssignOp::FloorDiv => "//=",
             AssignOp::Rem => "%=",
         }
     }
@@ -453,7 +456,7 @@ pub enum HPat {
         lit: Lit,
         span: Span,
     },
-    /// Biến thể enum / constructor: `Circle(r)`, `some(x)`, `ok(v)`, `Empty`, `none`.
+    /// Biến thể enum / constructor: `Circle(r)`, `Some(x)`, `Ok(v)`, `Empty`, `None`.
     Ctor {
         path: Vec<String>,
         args: Vec<HPat>,
@@ -634,7 +637,7 @@ pub enum HExpr {
         ty: Type,
         span: Span,
     },
-    /// `none` (value = `None`) và tự nâng `T → T?` (§4.4).
+    /// `None` (value = `None`) và tự nâng `T → T?` (§4.4).
     Opt {
         value: Option<Box<HExpr>>,
         ty: Type,
@@ -707,6 +710,8 @@ pub enum InterpPart {
     Str(String),
     /// `{expr}` — hạ như biểu thức bình thường.
     Expr(Box<HExpr>),
+    /// **R6c (VD-178)**: `{expr:spec}` — định dạng lúc chạy (`.N` = N chữ số thập phân).
+    ExprSpec { expr: Box<HExpr>, spec: String },
 }
 
 impl HExpr {
@@ -819,7 +824,7 @@ impl HExpr {
                 s
             }
             HExpr::Opt { value, .. } => match value {
-                None => "none".into(),
+                None => "None".into(),
                 Some(v) => format!("(opt {})", v.sexp()),
             },
             HExpr::Try { expr, .. } => format!("(try {})", expr.sexp()),
@@ -865,6 +870,9 @@ impl HExpr {
                     match p {
                         InterpPart::Str(t) => out.push_str(&format!(" \"{t}\"")),
                         InterpPart::Expr(e) => out.push_str(&format!(" {}", e.sexp())),
+                        InterpPart::ExprSpec { expr, spec } => {
+                            out.push_str(&format!(" (spec \"{spec}\" {})", expr.sexp()))
+                        }
                     }
                 }
                 out.push(')');
@@ -908,6 +916,8 @@ pub enum BinOp {
     Sub,
     Mul,
     Div,
+    /// **R7 (VD-178)**: `//` — chia lấy phần nguyên (làm tròn **xuống**).
+    FloorDiv,
     Rem,
     Pow,
     Range,
@@ -931,6 +941,7 @@ impl BinOp {
             BinOp::Sub => "-",
             BinOp::Mul => "*",
             BinOp::Div => "/",
+            BinOp::FloorDiv => "//",
             BinOp::Rem => "%",
             BinOp::Pow => "**",
             BinOp::Range => "..",
@@ -955,6 +966,7 @@ impl BinOp {
             "-" => BinOp::Sub,
             "*" => BinOp::Mul,
             "/" => BinOp::Div,
+            "//" => BinOp::FloorDiv,
             "%" => BinOp::Rem,
             "**" => BinOp::Pow,
             ".." => BinOp::Range,
@@ -1110,7 +1122,7 @@ mod tests {
                 span: Span::new(0, 0)
             }
             .sexp(),
-            "none"
+            "None"
         );
     }
 

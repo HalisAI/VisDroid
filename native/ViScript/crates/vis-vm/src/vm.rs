@@ -660,7 +660,7 @@ impl<'m> Th<'m> {
                 Instr::JumpIfNone(d) => {
                     // Luôn **pop** (1→0); nhảy khi đúng điều kiện.
                     let v = self.pop(vm, span)?;
-                    if matches!(v, Value::Opt(None)) {
+                    if v.is_none() {
                         let pc = {
                             let fr = self.frames.last().expect("khung");
                             let pc = fr.pc as i64 - 1 + d as i64;
@@ -673,7 +673,7 @@ impl<'m> Th<'m> {
                 Instr::JumpIfSome(d) => {
                     // Luôn **pop** (1→0); nhảy khi đúng điều kiện.
                     let v = self.pop(vm, span)?;
-                    if matches!(v, Value::Opt(Some(_))) {
+                    if v.is_some() {
                         let pc = {
                             let fr = self.frames.last().expect("khung");
                             let pc = fr.pc as i64 - 1 + d as i64;
@@ -736,18 +736,19 @@ impl<'m> Th<'m> {
                     let v = self.pop(vm, span)?;
                     // **Không** bọc hai lớp: `T?` → `T?` (giữ phẳng như interp).
                     match v {
-                        Value::Opt(_) => self.st.push(v),
-                        other => self.st.push(Value::Opt(Some(Box::new(other)))),
+                        // **VD-204 (1)**: enum `Option` thật — giữ phẳng (`Option` ⇒ `Option`).
+                        Value::Enum(ref ea, ..) if ea == "Option" => self.st.push(v),
+                        other => self.st.push(Value::some(other)),
                     }
                 }
-                Instr::MakeNone => self.st.push(Value::Opt(None)),
+                Instr::MakeNone => self.st.push(Value::none()),
                 Instr::MakeOk => {
                     let v = self.pop(vm, span)?;
-                    self.st.push(Value::Res(Ok(Box::new(v))));
+                    self.st.push(Value::ok(v));
                 }
                 Instr::MakeErr => {
                     let v = self.pop(vm, span)?;
-                    self.st.push(Value::Res(Err(Box::new(v))));
+                    self.st.push(Value::err(v));
                 }
                 Instr::MakeClosure(fi, n) => {
                     let cap = self.pop_n(vm, n as usize, span)?;
@@ -766,6 +767,13 @@ impl<'m> Th<'m> {
                     let idx = self.pop(vm, span)?;
                     let base = self.pop(vm, span)?;
                     let v = index(&base, &idx, span)?;
+                    self.st.push(v);
+                }
+                // **R8 (VD-178)**: `xs[i]?` — chỉ số **có kiểm tra**, trả `T?`.
+                Instr::IndexOpt => {
+                    let idx = self.pop(vm, span)?;
+                    let base = self.pop(vm, span)?;
+                    let v = index_opt(&base, &idx);
                     self.st.push(v);
                 }
                 Instr::Set => {
@@ -792,6 +800,16 @@ impl<'m> Th<'m> {
                     for p in parts {
                         s.push_str(&p.show());
                     }
+                    self.st.push(Value::Str(s));
+                }
+                // **R6c (VD-178)**: định dạng đỉnh ngăn xếp theo spec `consts[i]` (`.N`).
+                Instr::Format(i) => {
+                    let v = self.pop(vm, span)?;
+                    let spec = match vm.lit(i, span)? {
+                        Value::Str(s) => s,
+                        _ => return Err(vm.hong(VmError::BadIdx(i), span)),
+                    };
+                    let s = vis_interp::interp::dinh_dang(&v, &spec, span)?;
                     self.st.push(Value::Str(s));
                 }
                 Instr::IterInit => {
@@ -827,14 +845,11 @@ impl<'m> Th<'m> {
                     let ten = vm.ten(i, span)?;
                     let v = self.pop(vm, span)?;
                     let var_muon = ten.rsplit('.').next().unwrap_or(&ten).to_string();
-                    // `some`/`none`/`ok`/`err` là **biến thể dựng sẵn** của `Value::Opt`/`Value::Res`.
-                    let thap = var_muon.to_lowercase();
+                    // **VD-212 (A0)**: `Some`/`None`/`Ok`/`Err` là biến thể dựng sẵn của enum
+                    // `Option`/`Result` — so khớp biến thể **phân biệt hoa thường** (interp cũng vậy;
+                    // pattern viết sai hoa thường là lỗi lúc biên dịch, không bao giờ chạm VM).
                     let ok = match &v {
                         Value::Enum(_, var, args) => *var == var_muon && args.len() == n as usize,
-                        Value::Opt(Some(_)) => thap == "some" && n == 1,
-                        Value::Opt(None) => thap == "none" && n == 0,
-                        Value::Res(Ok(_)) => thap == "ok" && n == 1,
-                        Value::Res(Err(_)) => thap == "err" && n == 1,
                         _ => false,
                     };
                     self.st.push(Value::Bool(ok));
@@ -903,7 +918,12 @@ impl<'m> Th<'m> {
                 Instr::UnwrapOpt => {
                     let v = self.pop(vm, span)?;
                     match v {
-                        Value::Opt(Some(x)) => self.st.push((*x).clone()),
+                        Value::Enum(ea, va, ag)
+                            if ea == "Option" && va == "Some" && ag.len() == 1 =>
+                        {
+                            self.st
+                                .push(ag.into_iter().next().expect("Some luôn có một đối số"));
+                        }
                         other => self.st.push(other),
                     }
                 }
@@ -911,9 +931,6 @@ impl<'m> Th<'m> {
                     let v = self.pop(vm, span)?;
                     let x = match &v {
                         Value::Enum(_, _, args) => args.get(i as usize).cloned(),
-                        Value::Opt(Some(x)) if i == 0 => Some((**x).clone()),
-                        Value::Res(Ok(x)) if i == 0 => Some((**x).clone()),
-                        Value::Res(Err(x)) if i == 0 => Some((**x).clone()),
                         Value::List(xs) => xs.get(i as usize).cloned(),
                         _ => None,
                     };
@@ -929,7 +946,10 @@ impl<'m> Th<'m> {
                 Instr::Try => {
                     let v = self.pop(vm, span)?;
                     match &v {
-                        Value::Opt(None) | Value::Res(Err(_)) => {
+                        Value::Enum(ea, va, _)
+                            if (ea == "Option" && va == "None")
+                                || (ea == "Result" && va == "Err") =>
+                        {
                             self.frames.pop();
                             match self.frames.last_mut() {
                                 None => return Ok(v),
@@ -939,13 +959,11 @@ impl<'m> Th<'m> {
                                 }
                             }
                         }
-                        Value::Opt(Some(x)) => {
-                            let x = (**x).clone();
-                            self.st.push(x);
-                        }
-                        Value::Res(Ok(x)) => {
-                            let x = (**x).clone();
-                            self.st.push(x);
+                        Value::Enum(ea, va, ag)
+                            if (ea == "Option" && va == "Some" || ea == "Result" && va == "Ok")
+                                && ag.len() == 1 =>
+                        {
+                            self.st.push(ag[0].clone());
                         }
                         other => self.st.push(other.clone()),
                     }
@@ -973,8 +991,9 @@ fn lit_kind(k: u8) -> Option<LitKind> {
 }
 
 fn field(v: &Value, name: &str, span: Span) -> R<Value> {
-    // `.` trên `some(x)` tự bóc (interp làm vậy) — `?.` mới là đường có kiểm `none`.
-    if let Value::Opt(Some(x)) = v {
+    // `.` trên `Some(x)` tự bóc (interp làm vậy) — `?.` mới là đường có kiểm `None`.
+    // `.` trên `Some(x)` tự bóc (interp làm vậy) — `?.` mới là đường có kiểm `None`.
+    if let Some(x) = v.opt_payload() {
         return field(x, name, span);
     }
     match v {
@@ -1106,5 +1125,21 @@ fn with(base: &Value, pairs: Vec<(String, Value)>, span: Span) -> R<Value> {
             format!("`with` không dùng được cho `{}`", other.show()),
             span,
         ))),
+    }
+}
+
+/// **R8 (VD-178)**: `xs[i]?` — trả `Some(v)` nếu trong phạm vi, `None` nếu ngoài (không panic).
+fn index_opt(base: &Value, idx: &Value) -> Value {
+    match (base, idx) {
+        (Value::List(xs), Value::Int(i)) if *i >= 0 => Value::opt(xs.get(*i as usize).cloned()),
+        (Value::Bytes(bs), Value::Int(i)) if *i >= 0 => {
+            Value::opt(bs.get(*i as usize).map(|b| Value::Int(*b as i64)))
+        }
+        (Value::Map(kv), k) => Value::opt(
+            kv.iter()
+                .find(|(kk, _)| kk.eq_value(k))
+                .map(|(_, v)| v.clone()),
+        ),
+        _ => Value::none(),
     }
 }

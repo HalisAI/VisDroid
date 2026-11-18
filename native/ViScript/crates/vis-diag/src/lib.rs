@@ -75,7 +75,7 @@ impl Code {
 /// - mọi mã phải có mặt trong SPEC-lex/errata trước khi vào sổ; `message_vi` ở đây là **placeholder
 ///   vòng 1** — bảng vi/en/ja thuộc ST-03;
 /// - đổi nghĩa/đánh số lại phải qua Agent 0 (VD-08), không tự sửa.
-pub const CODES: [Code; 10] = [
+pub const CODES: [Code; 11] = [
     Code {
         id: 101,
         short: "VS0101",
@@ -156,12 +156,23 @@ pub const CODES: [Code; 10] = [
         message_ja: "`^` の文脈が不正です（コマンドモードの字句解析器が stage 先頭を判定）",
         severity: Severity::Error,
     },
+    Code {
+        id: 111,
+        short: "VS0111",
+        message_vi:
+            "tên biến thể nên viết **hoa** chữ đầu (`Some`/`None`/`Ok`/`Err`) — **ngừng phát từ VD-212** (sai hoa thường trong pattern nay báo `VS0203`)",
+        message_en: "variant name should be UpperCamel (`Some`/`None`/`Ok`/`Err`) — **stops emitting from VD-212** (wrong case in patterns now report `VS0203`)",
+        message_ja: "列挙型の名前は先頭を大文字にしてください（`Some`/`None`/`Ok`/`Err`）",
+        severity: Severity::Warning,
+    },
 ];
 
 /// Sổ **mã cú pháp** `02xx` (VD-35) — tách khỏi [`CODES`] để test "CODES khớp SPEC-lex §7" vẫn
 /// là hàng rào thật (không nới kỳ vọng cũ). Quy tắc cấp: `VS0201` lỗi cú pháp chung; `VS0202`
 /// `%` dùng như phần trăm (thông điệp phải gợi ý `50pct`, L3 của `docs/DUYET-AGENT0-vong-va.md`).
-pub const SYNTAX_CODES: [Code; 2] = [
+/// VD-215 (2026-11-18): +**VS0207** (`trộn loại khoá trong {…}`, lỗi) và +**VS0208**
+/// (`` `{[k]: …}` khoá là danh sách``, **cảnh báo**) — đăng ký theo VD-215 (không dùng lại `VS0205`).
+pub const SYNTAX_CODES: [Code; 8] = [
     Code {
         id: 201,
         short: "VS0201",
@@ -178,6 +189,62 @@ pub const SYNTAX_CODES: [Code; 2] = [
         message_ja: "`%` がパーセントとして使われています — `50pct` と書いてください",
         severity: Severity::Error,
     },
+    // **R9 (VD-178)**: tách nghĩa khỏi `VS0201` — mỗi mã một nghĩa.
+    Code {
+        id: 203,
+        short: "VS0203",
+        message_vi: "từ khoá đã bỏ — dùng cú pháp mới (xem gợi ý)",
+        message_en: "removed keyword — use the new syntax (see hint)",
+        message_ja: "廃止されたキーワードです — 新しい構文を使ってください（ヒント参照）",
+        severity: Severity::Error,
+    },
+    Code {
+        id: 204,
+        short: "VS0204",
+        message_vi: "`const` cần ghi kiểu khi vế phải không phải literal",
+        message_en: "`const` needs a type annotation when the right-hand side is not a literal",
+        message_ja: "右辺がリテラルでない場合、`const` には型注釈が必要です",
+        severity: Severity::Error,
+    },
+    Code {
+        id: 205,
+        short: "VS0205",
+        message_vi: "dựng bản ghi bằng `{…}` — dùng `Tên(trường: …)` hoặc khoá chuỗi cho map",
+        message_en:
+            "record construction with `{…}` — use `Name(field: …)` or string keys for a map",
+        message_ja:
+            "`{…}` によるレコード構築 — `Name(field: …)` か、マップには文字列キーを使ってください",
+        severity: Severity::Error,
+    },
+    Code {
+        id: 206,
+        short: "VS0206",
+        message_vi: "khối `else` của `let … else` phải thoát (return/break/continue/panic)",
+        message_en: "the `else` block of `let … else` must diverge (return/break/continue/panic)",
+        message_ja:
+            "`let … else` の `else` ブロックは脱出する必要があります（return/break/continue/panic）",
+        severity: Severity::Error,
+    },
+    // **VD-215 (2026-11-18)**: `{…}` trộn loại khoá — bất kể thứ tự.
+    Code {
+        id: 207,
+        short: "VS0207",
+        message_vi: "trộn loại khoá trong `{…}` — bản ghi và map không trộn được",
+        message_en: "mixed key kinds in `{…}` — records and maps cannot be mixed",
+        message_ja: "`{…}` のキーの種類が混在しています — レコードとマップは混ぜられません",
+        severity: Severity::Error,
+    },
+    // **VD-215 (2026-11-18)**: `{[k]: …}` — danh sách làm khoá; gần quen JavaScript.
+    // `{([k]): …}` (lồng trong ngoặc) là cách tắt cảnh báo này.
+    Code {
+        id: 208,
+        short: "VS0208",
+        message_vi: "`{[k]: …}` khoá là danh sách — dùng `{(k): v}`; viết `{([k]): …}` nếu muốn giữ danh sách làm khoá",
+        message_en: "`{[k]: …}` uses a list as key — use `{(k): v}`; write `{([k]): …}` to keep a list key",
+        message_ja:
+            "`{[k]: …}` はリストをキーにします — `{(k): v}` を使ってください。リストのキーを保持するなら `{([k]): …}` と書いてください",
+        severity: Severity::Warning,
+    },
 ];
 
 /// Sổ **mã tên** `03xx` (VD-42, ST-11) — sổ **thứ ba**, tách khỏi [`CODES`]/[`SYNTAX_CODES`] vì
@@ -185,7 +252,7 @@ pub const SYNTAX_CODES: [Code; 2] = [
 ///
 /// Cấp tối thiểu theo VD-42: `VS0301` tên không tồn tại (ST-11 dùng cho **tên giá trị**; tên kiểu
 /// để ST-12), `VS0302` khai báo trùng trong **cùng** phạm vi.
-pub const NAME_CODES: [Code; 2] = [
+pub const NAME_CODES: [Code; 3] = [
     Code {
         id: 301,
         short: "VS0301",
@@ -202,12 +269,21 @@ pub const NAME_CODES: [Code; 2] = [
         message_ja: "同じスコープで重複した宣言です",
         severity: Severity::Error,
     },
+    // **R9 (VD-178)**: tách "kiểu không tồn tại" khỏi `VS0301` (tên giá trị).
+    Code {
+        id: 303,
+        short: "VS0303",
+        message_vi: "kiểu không tồn tại",
+        message_en: "type does not exist",
+        message_ja: "型が存在しません",
+        severity: Severity::Error,
+    },
 ];
 
 /// Sổ **mã kiểu** `04xx` (VD-42, ST-12) — sổ thứ tư. `VS0412` giữ đúng nghĩa "kiểu không khớp"
 /// của thiết kế §9; `VS0401` sai số/thứ tự đối số; `VS0402` `match` không xét hết; `VS0403`
 /// trường/kiểu không tồn tại.
-pub const TYPE_CODES: [Code; 5] = [
+pub const TYPE_CODES: [Code; 9] = [
     Code {
         id: 401,
         short: "VS0401",
@@ -252,6 +328,39 @@ pub const TYPE_CODES: [Code; 5] = [
         message_ja: "型が一致しません",
         severity: Severity::Error,
     },
+    // **R9 (VD-178)**: tách 4 nghĩa khỏi `VS0412` — mỗi mã một nghĩa.
+    Code {
+        id: 413,
+        short: "VS0413",
+        message_vi: "gán vào ràng buộc bất biến (`let`) — dùng `var` nếu cần đổi",
+        message_en: "assignment to an immutable binding (`let`) — use `var` to mutate",
+        message_ja: "不変束縛 (`let`) への代入です — 変更するには `var` を使ってください",
+        severity: Severity::Error,
+    },
+    Code {
+        id: 414,
+        short: "VS0414",
+        message_vi: "toán tử không hỗ trợ cho kiểu này",
+        message_en: "operator not supported for this type",
+        message_ja: "この型では演算子がサポートされていません",
+        severity: Severity::Error,
+    },
+    Code {
+        id: 415,
+        short: "VS0415",
+        message_vi: "`async` sai chỗ — chỉ dùng cho hàm cấp tệp (`async fn`)",
+        message_en: "`async` in the wrong place — only for top-level functions (`async fn`)",
+        message_ja: "`async` の位置が不正です — トップレベル関数 (`async fn`) のみ",
+        severity: Severity::Error,
+    },
+    Code {
+        id: 416,
+        short: "VS0416",
+        message_vi: "range chỉ nhận `int`",
+        message_en: "range only accepts `int`",
+        message_ja: "range は `int` のみ受け付けます",
+        severity: Severity::Error,
+    },
 ];
 
 /// Mã **`VS0405`** — "không có trường này trên kiểu bản ghi" (ST-50: trường là lỗi **kiểu**).
@@ -267,7 +376,7 @@ pub fn ma_truong() -> &'static Code {
 /// phép chưa hỗ trợ ở VS0), `VS0502` chia/lấy dư cho 0, `VS0503` chỉ số ngoài phạm vi.
 /// Khối `06xx` — **chế độ lệnh** (ST-18, VD-52). Bốn mã, đúng phạm vi VS0:
 /// lệnh không có trong bảng chữ ký, sai đối số, pipeline không nối được, tính năng chưa hỗ trợ.
-pub const COMMAND_CODES: [Code; 4] = [
+pub const COMMAND_CODES: [Code; 6] = [
     Code {
         id: 601,
         short: "VS0601",
@@ -295,20 +404,37 @@ pub const COMMAND_CODES: [Code; 4] = [
     Code {
         id: 604,
         short: "VS0604",
-        message_vi: "tính năng chưa hỗ trợ ở VS0 (ví dụ chạy nền `&`)",
-        message_en: "feature not supported in VS0 (e.g. background `&`)",
-        message_ja: "VS0 では未対応の機能です（例: バックグラウンド `&`）",
+        message_vi: "tính năng chưa hỗ trợ (ví dụ chạy nền `&`)",
+        message_en: "feature not supported (e.g. background `&`)",
+        message_ja: "未対応の機能です（例: バックグラウンド `&`）",
+        severity: Severity::Error,
+    },
+    // **R9 (VD-178)**: tách 2 nghĩa khỏi `VS0604` — mỗi mã một nghĩa.
+    Code {
+        id: 605,
+        short: "VS0605",
+        message_vi: "chạy nền `&` chưa hỗ trợ",
+        message_en: "background `&` not supported",
+        message_ja: "バックグラウンド `&` は未対応です",
+        severity: Severity::Error,
+    },
+    Code {
+        id: 606,
+        short: "VS0606",
+        message_vi: "chương trình ngoài (`^…`) chưa hỗ trợ",
+        message_en: "external program (`^…`) not supported",
+        message_ja: "外部プログラム (`^…`) は未対応です",
         severity: Severity::Error,
     },
 ];
 
-pub const RUNTIME_CODES: [Code; 6] = [
+pub const RUNTIME_CODES: [Code; 8] = [
     Code {
         id: 501,
         short: "VS0501",
-        message_vi: "lỗi runtime: phép toán hoặc tính năng chưa hỗ trợ ở VS0",
-        message_en: "runtime error: operation or feature not supported in VS0",
-        message_ja: "実行時エラー: VS0 では未対応の演算または機能です",
+        message_vi: "lỗi runtime: phép toán hoặc tính năng chưa hỗ trợ",
+        message_en: "runtime error: operation or feature not supported",
+        message_ja: "実行時エラー: 未対応の演算または機能です",
         severity: Severity::Error,
     },
     Code {
@@ -357,6 +483,23 @@ pub const RUNTIME_CODES: [Code; 6] = [
         message_ja: "タスク (`async fn`) でエラー: タスク本体でエラーが発生しました（元のコード付き）",
         severity: Severity::Error,
     },
+    // **R9 (VD-178)**: tách 2 nghĩa khỏi `VS0501` — mỗi mã một nghĩa.
+    Code {
+        id: 507,
+        short: "VS0507",
+        message_vi: "tràn `i64` lúc chạy",
+        message_en: "`i64` overflow at runtime",
+        message_ja: "実行時の `i64` オーバーフロー",
+        severity: Severity::Error,
+    },
+    Code {
+        id: 508,
+        short: "VS0508",
+        message_vi: "giá trị không gửi được sang tác vụ khác (không `Sendable`)",
+        message_en: "value cannot be sent to another task (not `Sendable`)",
+        message_ja: "他のタスクに送信できない値です（`Sendable` ではありません）",
+        severity: Severity::Error,
+    },
 ];
 
 /// **Sổ thứ bảy** — `07xx` module (ST-25, VD-57): `use` không thấy tệp, vòng phụ thuộc, `use` trùng.
@@ -367,13 +510,13 @@ pub const RUNTIME_CODES: [Code; 6] = [
 /// **ST-128 (VD-125)**: cấp **`VS0704`** trong **cùng khối `07xx`** — "không giải được ràng buộc gói";
 /// thông điệp **kèm chuỗi ràng buộc** gây xung đột. Chọn số **kế tiếp của khối** (`704`) theo VD-125;
 /// **không** dùng `next_block()` (nó trả `801` vì suy từ khối đã dành trước — xem JOURNAL ST-128 §7).
-pub const MODULE_CODES: [Code; 4] = [
+pub const MODULE_CODES: [Code; 7] = [
     Code {
         id: 701,
         short: "VS0701",
-        message_vi: "không thấy tệp module (hoặc `std`/`pkg` chưa hỗ trợ)",
-        message_en: "module file not found (or `std`/`pkg` not supported)",
-        message_ja: "モジュールファイルが見つかりません (または `std`/`pkg` は未対応)",
+        message_vi: "không thấy tệp module",
+        message_en: "module file not found",
+        message_ja: "モジュールファイルが見つかりません",
         severity: Severity::Error,
     },
     Code {
@@ -398,6 +541,31 @@ pub const MODULE_CODES: [Code; 4] = [
         message_vi: "không giải được ràng buộc gói: không phiên bản nào thoả đồng thời các ràng buộc (kèm chuỗi ràng buộc)",
         message_en: "package dependency resolution failed: no version satisfies all constraints (constraint chain included)",
         message_ja: "パッケージの依存解決に失敗しました: すべての制約を同時に満たすバージョンがありません（制約の連鎖付き）",
+        severity: Severity::Error,
+    },
+    // **R9 (VD-178)**: tách 3 nghĩa khỏi `VS0701` — mỗi mã một nghĩa.
+    Code {
+        id: 705,
+        short: "VS0705",
+        message_vi: "`std` chưa hỗ trợ",
+        message_en: "`std` not supported",
+        message_ja: "`std` は未対応です",
+        severity: Severity::Error,
+    },
+    Code {
+        id: 706,
+        short: "VS0706",
+        message_vi: "`pkg` chưa hỗ trợ",
+        message_en: "`pkg` not supported",
+        message_ja: "`pkg` は未対応です",
+        severity: Severity::Error,
+    },
+    Code {
+        id: 707,
+        short: "VS0707",
+        message_vi: "hash gói không khớp `vis.lock`/sổ",
+        message_en: "package hash does not match `vis.lock`/sumdb",
+        message_ja: "パッケージのハッシュが `vis.lock`/sumdb と一致しません",
         severity: Severity::Error,
     },
 ];
@@ -549,10 +717,11 @@ mod tests {
     fn so_ma_lien_mach_va_dung_spec_lex() {
         let ids: Vec<u16> = CODES.iter().map(|c| c.id).collect();
         assert_eq!(ids.first(), Some(&101));
-        assert_eq!(ids.last(), Some(&110));
-        assert_eq!(ids.len(), 10);
+        // **R1a (VD-178)**: +**VS0111** (cảnh báo chữ hoa biến thể) ⇒ **11** mã.
+        assert_eq!(ids.last(), Some(&111));
+        assert_eq!(ids.len(), 11);
         for (i, id) in ids.iter().enumerate() {
-            assert_eq!(CODES[i].id, 101 + i as u16, "sổ phải liền mạch 0101..0110");
+            assert_eq!(CODES[i].id, 101 + i as u16, "sổ phải liền mạch 0101..0111");
             assert_eq!(CODES[i].short, format!("VS{id:04}"));
             assert!(!CODES[i].message_vi.is_empty());
         }
@@ -561,7 +730,8 @@ mod tests {
     #[test]
     fn tra_ma_va_ma_la() {
         assert_eq!(lookup(103).map(|c| c.short), Some("VS0103"));
-        assert!(lookup(111).is_none());
+        // **R1a (VD-178)**: `VS0111` **đã** cấp ⇒ mã lạ là `VS0112`.
+        assert!(lookup(112).is_none());
         assert_eq!(
             lookup_str("VS0107").map(|c| c.severity),
             Some(Severity::Warning)
@@ -592,8 +762,8 @@ mod tests {
         // và **VS0505** (deadlock/khoá) — vẫn ở cuối khối, index 0..2 giữ nguyên.
         assert_eq!(
             ids,
-            vec![501, 502, 503, 504, 505, 506],
-            "sổ runtime đúng thứ tự tăng dần"
+            vec![501, 502, 503, 504, 505, 506, 507, 508],
+            "sổ runtime đúng thứ tự tăng dần (R9: +VS0507 tràn i64, +VS0508 không Sendable)"
         );
         for c in RUNTIME_CODES.iter() {
             assert_eq!(lookup(c.id).map(|x| x.short), Some(c.short));
@@ -613,8 +783,8 @@ mod tests {
         let ids: Vec<u16> = TYPE_CODES.iter().map(|c| c.id).collect();
         assert_eq!(
             ids,
-            vec![401, 402, 403, 405, 412],
-            "sổ kiểu đúng thứ tự tăng dần (ST-50: thêm VS0405 trước VS0412)"
+            vec![401, 402, 403, 405, 412, 413, 414, 415, 416],
+            "sổ kiểu đúng thứ tự tăng dần (ST-50: VS0405 trước VS0412; R9: +VS0413..0416)"
         );
         // **SỬA KÈM LÝ DO (ST-50, Agent 0: VS0605 sai sổ — trường là lỗi kiểu)**: VS0605 đổi tên
         // thành **VS0405** và chuyển sang sổ này ⇒ 0412 **dời xuống index 4**.
@@ -645,7 +815,7 @@ mod tests {
     #[test]
     fn so_ten_03xx_khoa_theo_vd42() {
         let ids: Vec<u16> = NAME_CODES.iter().map(|c| c.id).collect();
-        assert_eq!(ids, vec![301, 302]);
+        assert_eq!(ids, vec![301, 302, 303]);
         assert_eq!(NAME_CODES[0].short, "VS0301");
         assert_eq!(NAME_CODES[1].short, "VS0302");
         // **SỬA KÈM LÝ DO (ST-18)**: ST-18 cấp sổ thứ **sáu** `06xx` (4 mã chế độ lệnh) ⇒
@@ -662,7 +832,11 @@ mod tests {
         // **SỬA KÈM LÝ DO (ST-128, VD-125)**: +**VS0704** ("không giải được ràng buộc gói", khối
         // `07xx`, số **kế tiếp** của khối) ⇒ **33** mã (sổ module 3 → **4**, thêm **ở cuối** nên
         // index 0..2 không đổi); `BOOKS` vẫn **7**; `next_block()` vẫn **801** (không đổi).
-        assert_eq!(all_codes().count(), 33);
+        // **R9 (VD-178)**: +16 mã (VS0203..0206, VS0303, VS0413..0416, VS0507/0508,
+        // VS0605/0606, VS0705..0707) ⇒ **49** mã; `BOOKS` vẫn **7**; `next_block()` vẫn **801**.
+        // **R1a (VD-178)**: +**VS0111** (cảnh báo chữ hoa biến thể) ⇒ **50** mã.
+        // **VD-215 (2026-11-18)**: +**VS0207**/**VS0208** ⇒ **52** mã.
+        assert_eq!(all_codes().count(), 52);
         assert_eq!(BOOKS.len(), 7);
         for id in [601u16, 602, 603, 604] {
             assert!(
@@ -692,16 +866,24 @@ mod tests {
 
     #[test]
     fn so_cu_phap_02xx_khoa_theo_vd35() {
-        // Sổ cú pháp riêng: 2 mã, đúng thứ tự, đúng nghĩa, và `CODES` KHÔNG bị đụng.
+        // Sổ cú pháp riêng: 6 mã (R9: +VS0203..0206), đúng thứ tự, đúng nghĩa, `CODES` KHÔNG bị đụng.
         let ids: Vec<u16> = SYNTAX_CODES.iter().map(|c| c.id).collect();
-        assert_eq!(ids, vec![201, 202]);
+        assert_eq!(ids, vec![201, 202, 203, 204, 205, 206, 207, 208]);
         assert_eq!(SYNTAX_CODES[0].short, "VS0201");
         assert_eq!(SYNTAX_CODES[1].short, "VS0202");
+        assert_eq!(SYNTAX_CODES[2].short, "VS0203");
+        assert_eq!(SYNTAX_CODES[3].short, "VS0204");
+        assert_eq!(SYNTAX_CODES[4].short, "VS0205");
+        assert_eq!(SYNTAX_CODES[5].short, "VS0206");
+        assert_eq!(SYNTAX_CODES[6].short, "VS0207");
+        assert_eq!(SYNTAX_CODES[7].short, "VS0208");
+        assert_eq!(SYNTAX_CODES[7].severity, Severity::Warning);
         assert!(
             SYNTAX_CODES[1].message_vi.contains("50pct"),
             "VS0202 phải gợi ý `50pct` (L3)"
         );
-        assert_eq!(CODES.len(), 10, "sổ từ vựng vẫn đúng 10 mã của §7");
+        // **R1a (VD-178)**: +**VS0111** ⇒ **11** mã từ vựng.
+        assert_eq!(CODES.len(), 11, "sổ từ vựng đúng 11 mã của §7");
         // Tra xuyên sổ: `vis explain VS0201` phải chạy.
         for (i, c) in SYNTAX_CODES.iter().enumerate() {
             assert_eq!(lookup(201 + i as u16).map(|x| x.short), Some(c.short));

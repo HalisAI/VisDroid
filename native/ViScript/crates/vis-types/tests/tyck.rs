@@ -128,10 +128,10 @@ const SO_HOC: &[(&str, &str)] = &[
     ("250ms + 1s", "ok(duration)"),
     // kỳ vọng: ok(percent)
     ("50pct + 10pct", "ok(percent)"),
-    // kỳ vọng: !VS0412 — trộn hai đơn vị
-    ("5mb + 1s", "!VS0412"),
-    // kỳ vọng: !VS0412 — trộn int với đơn vị
-    ("1 + 5mb", "!VS0412"),
+    // kỳ vọng: !VS0414 — trộn hai đơn vị (R9: toán tử ⇒ VS0414)
+    ("5mb + 1s", "!VS0414"),
+    // kỳ vọng: !VS0414 — trộn int với đơn vị
+    ("1 + 5mb", "!VS0414"),
     // kỳ vọng: ok(size)
     ("5mb * 2", "ok(size)"),
     // kỳ vọng: ok(size)
@@ -149,21 +149,22 @@ const SO_HOC: &[(&str, &str)] = &[
     // kỳ vọng: ok(float) — duration / duration
     ("250ms / 250ms", "ok(float)"),
     // kỳ vọng: ok(int) — chia 0 là **runtime**, không phải lỗi kiểu
-    ("1 / 0", "ok(int)"),
+    // **R7 (VD-178)**: `/` luôn `float`.
+    ("1 / 0", "ok(float)"),
     // kỳ vọng: ok(int)
     ("2 ** 3", "ok(int)"),
     // kỳ vọng: ok(int) — mũ âm là runtime
     ("2 ** -1", "ok(int)"),
-    // kỳ vọng: !VS0412
-    ("5mb ** 2", "!VS0412"),
-    // kỳ vọng: !VS0412 — không có `str + str`
-    ("\"a\" + \"b\"", "!VS0412"),
+    // kỳ vọng: !VS0414
+    ("5mb ** 2", "!VS0414"),
+    // kỳ vọng: ok(str) — **R6b (VD-178)**: `str + str` **nối** (trước: `VS0412`/`VS0414`)
+    ("\"a\" + \"b\"", "ok(str)"),
     // kỳ vọng: ok(int)
     ("1 % 2", "ok(int)"),
     // kỳ vọng: ok(size)
     ("5mb % 2", "ok(size)"),
-    // kỳ vọng: !VS0412
-    ("50pct % 2", "!VS0412"),
+    // kỳ vọng: !VS0414
+    ("50pct % 2", "!VS0414"),
     // kỳ vọng: ok(float) — literal int ở vị trí float (§3.5)
     ("1.5 + 1", "ok(float)"),
 ];
@@ -275,8 +276,8 @@ const KIEN_TRUC: &[(&str, &str)] = &[
     ),
     // kỳ vọng: !VS0412 — `.` trên `T?` phải dùng `?.`
     ("let x: int? = 5\nx.foo", "!VS0412"),
-    // kỳ vọng: !VS0301 — tên **kiểu** không tồn tại (ST-12 phân giải `TypeRef`)
-    ("let x: Unknown = 1\nx", "!VS0301"),
+    // kỳ vọng: !VS0303 — tên **kiểu** không tồn tại (R9: tách khỏi VS0301 tên giá trị)
+    ("let x: Unknown = 1\nx", "!VS0303"),
 ];
 
 // ---------------------------------------------------------------------------

@@ -9,11 +9,6 @@ license.workspace = true
 name = "vis"
 path = "src/main.rs"
 
-# **vis-ffi**: bin `vis` và crate FFI của VisDroid dùng chung pipeline qua thư viện này.
-[lib]
-name = "vis_cli"
-path = "src/lib.rs"
-
 [dependencies]
 vis-diag = { path = "../vis-diag" }
 vis-syntax = { path = "../vis-syntax" }

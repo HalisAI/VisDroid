@@ -240,7 +240,7 @@ fn tach_dong(s: &str) -> Value {
 ///
 /// `goc_proc` = `/proc/self/fd` ở production; **tham số hoá** để test được nhánh "không đọc được
 /// `/proc`" mà không cần unmount procfs.
-pub(crate) fn doc_theo_handle(p: &str, goc_proc: &Path) -> Result<DocQuaHandle, String> {
+pub fn doc_theo_handle(p: &str, goc_proc: &Path) -> Result<DocQuaHandle, String> {
     use std::io::Read as _;
     let loi = |e: std::io::Error| format!("không đọc được `{p}`: {e}");
     let mut f = std::fs::File::open(p).map_err(loi)?;

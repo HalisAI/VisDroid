@@ -87,7 +87,24 @@ fn roundtrip_tren_toan_bo_323_ca() {
     // **SỬA KÈM LÝ DO (ST-59)**: +6 ca `vish/` ⇒ **394 ca** (345 `.vis` + 49 `.vish`).
     // **SỬA KÈM LÝ DO (ST-60)**: +22 ca `async/` ⇒ **416 ca** (367 `.vis` + 49 `.vish`).
     // **SỬA KÈM LÝ DO (ST-72)**: +6 ca `cap/` ⇒ 447 ca (397 .vis + 50 .vish).
-    assert_eq!(tat_ca.len(), 447, "phải đủ 447 ca (397 .vis + 50 .vish)");
+    // **SỬA KÈM LÝ DO (R9, VD-178)**: +1 ca `loi/range-khong-int` ⇒ 448 ca (398 .vis + 50 .vish).
+    // **SỬA KÈM LÝ DO (R6, VD-178)**: +4 ca `chuoi/` ⇒ 452 ca (402 .vis + 50 .vish).
+    // **SỬA KÈM LÝ DO (R17, VD-178)**: +`dieu-khien/is-empty` ⇒ 453 ca (403 .vis + 50 .vish).
+    // **SỬA KÈM LÝ DO (R3b, VD-178)**: +`result/let-else` ⇒ 454 ca (404 .vis + 50 .vish).
+    // **SỬA KÈM LÝ DO (R3a, VD-178)**: +`result/if-let-pattern` ⇒ 455 ca (405 .vis + 50 .vish).
+    // **SỬA KÈM LÝ DO (R16, VD-178)**: +`pham-vi/che-ten-let` ⇒ 456 ca (406 .vis + 50 .vish).
+    // **SỬA KÈM LÝ DO (R12a, VD-178)**: +`kieu/type-alias-newtype` ⇒ 457 ca (407 .vis + 50 .vish).
+    // **SỬA KÈM LÝ DO (R11, VD-178)**: +`enum/vi-tri-va-dung-ten` ⇒ 458 ca (408 .vis + 50 .vish).
+    // **SỬA KÈM LÝ DO (R7, VD-178)**: +`so-hoc/chia-nguyen` ⇒ 459 ca (409 .vis + 50 .vish).
+    // **SỬA KÈM LÝ DO (R8, VD-178)**: +`list/chi-so-an-toan` ⇒ 460 ca (410 .vis + 50 .vish).
+    // **SỬA KÈM LÝ DO (R5a, VD-178)**: +`ham/goi-ten` ⇒ 461 ca (411 .vis + 50 .vish).
+    // **SỬA KÈM LÝ DO (R5c, VD-178)**: +`chuoi-phuong-thuc/std-method` ⇒ 462 ca (412 .vis + 50 .vish).
+    // **SỬA KÈM LÝ DO (R20a, VD-178)**: +`assert/thong-diep` ⇒ 463 ca (413 .vis + 50 .vish).
+    // **SỬA KÈM LÝ DO (R20b, VD-178)**: +`list/duyet-nang-cao` ⇒ 464 ca (414 .vis + 50 .vish).
+    // **SỬA KÈM LÝ DO (R19b, VD-178)**: +`loi/doi-dau-tran` (VS0507) ⇒ 465 ca (415 .vis + 50 .vish).
+    // **SỬA KÈM LÝ DO (R2, VD-178)**: +`optional/{int-qhap-gan, map-get-lot, t-qhap-generic}` +
+    //   `loi/none-bo` (VS0203) ⇒ **469 ca** (419 .vis + 50 .vish).
+    assert_eq!(tat_ca.len(), 469, "phải đủ 469 ca (419 .vis + 50 .vish)");
     // Ca **cố ý lỗi tĩnh** (có `.err`) không sinh mã — `sem.rs` kiểm chúng bằng chẩn đoán.
     let so_loi = so_ca_loi(&tat_ca);
     let ds: Vec<PathBuf> = tat_ca
@@ -95,7 +112,7 @@ fn roundtrip_tren_toan_bo_323_ca() {
         .filter(|p| !p.with_extension("err").exists())
         .cloned()
         .collect();
-    assert_eq!(ds.len() + so_loi, 447);
+    assert_eq!(ds.len() + so_loi, 469);
     let mut loi = Vec::new();
     let mut tong_lenh = 0usize;
     for p in &ds {

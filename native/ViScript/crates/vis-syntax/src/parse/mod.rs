@@ -470,11 +470,18 @@ impl<'a> Parser<'a> {
         if self.at_kw("impl") {
             return self.impl_decl();
         }
+        // **R12a (VD-178)**: `alias`/`newtype` **đã bỏ** — dùng `type X = T` / `type Email(str)`.
         if self.at_kw("alias") {
-            return self.alias_decl(NodeKind::AliasDecl);
+            return Err(self.err_code(
+                &vis_diag::SYNTAX_CODES[2],
+                "`alias` đã bỏ — dùng `type X = T`",
+            ));
         }
         if self.at_kw("newtype") {
-            return self.alias_decl(NodeKind::NewtypeDecl);
+            return Err(self.err_code(
+                &vis_diag::SYNTAX_CODES[2],
+                "`newtype` đã bỏ — dùng `type Email(str)`",
+            ));
         }
         if self.at_kw("extern") {
             return self.extern_decl();
@@ -590,7 +597,9 @@ impl<'a> Parser<'a> {
                 )));
             }
         }
-        if self.at_punct("?") {
+        // **R2 (VD-178)**: hậu tố optional lặp — `?` = 1 lớp, `??` (cặp token `??` của coalesce) = 2 lớp.
+        // (`int??` lex thành `int` + `??`; không phải 2×`?`.)
+        while self.at_punct("?") || self.at_punct("??") {
             elems.push(self.bump());
         }
         Ok(self.node(NodeKind::Type, elems))
@@ -846,6 +855,12 @@ impl<'a> Parser<'a> {
         let mut elems = vec![self.bump()];
         let e = self.expr()?;
         Self::push_node(&mut elems, e);
+        // **R20a (VD-178)**: `assert cond, "thông điệp"` — đối số thứ hai tuỳ chọn.
+        if self.at_punct(",") {
+            elems.push(self.bump());
+            let m = self.expr()?;
+            Self::push_node(&mut elems, m);
+        }
         Ok(self.node(NodeKind::AssertStmt, elems))
     }
 
@@ -928,7 +943,8 @@ impl<'a> Parser<'a> {
         }
         let op = self.tok_at(1);
         let eq = self.tok_at(2);
-        matches!(op.text.as_str(), "+" | "-" | "*" | "/" | "%")
+        // **R7 (VD-178)**: `//=` — lexer tách `//` `=`.
+        matches!(op.text.as_str(), "+" | "-" | "*" | "/" | "//" | "%")
             && op.kind == Kind::Punct
             && eq.is_punct("=")
             && op.span.end == eq.span.start

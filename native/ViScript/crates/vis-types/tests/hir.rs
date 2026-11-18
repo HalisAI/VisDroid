@@ -66,7 +66,7 @@ fn lower_and_check(src: &str) -> HirOutput {
 /// Tổng số khối ```vis trong tài liệu (ST-05/ST-09 khoá 22).
 const TOTAL_VIS_BLOCKS: usize = 22;
 /// Số khối **đủ thân** (VD-36).
-const FULL_BODIED: usize = 15;
+const FULL_BODIED: usize = 16;
 
 // **Một nguồn duy nhất** (nợ #129, ST-158): 7 khối loại trừ theo VD-36 nằm ở
 // `test/doc_excluded.rs` (số dòng + lý do từng khối + cách dịch toạ độ ST-120b:
@@ -85,21 +85,24 @@ const DOC_BLOCKS: [(usize, usize, usize, usize); FULL_BODIED] = [
     // **SỬA KÈM LÝ DO (ST-57)**: `derives Eq, Show` **sinh** `impl` ⇒ +1 item (`HImpl`) và +5
     // khai báo (`User.show` + `self`, `User.eq` + `self` + `other`).
     // **ST-60c**: `enum Shape derives Show` nay **sinh** `impl` thật ⇒ +1 item, +2 sym (show + self).
-    (214, 6, 0, 11), // type User derives Eq/Show + enum Shape derives Show + alias + newtype
-    (238, 1, 0, 4),  // fn total + R + rows + r (lambda)
-    (290, 0, 5, 6),  // x, count, a, b, name, age
-    (325, 0, 1, 4),  // r (arm1), r (arm2 = or-pattern dùng chung), w, h
-    (342, 0, 3, 3),  // e, domain, mail (if let)
-    (406, 1, 0, 5),  // greet + name + times + loud + s
-    (422, 0, 1, 3),  // f + x (lambda) + y
-    (473, 1, 0, 4),  // read_config + dir + text + cfg
-    (488, 0, 1, 2),  // cfg + err (else)
-    (539, 0, 3, 2),  // a, b
-    (553, 0, 2, 2),  // counter, inc
-    (575, 0, 0, 0),  // chỉ có `#!` + `#|` (chú thích)
-    (688, 1, 0, 5),  // backup_big + ctx + dir + files + f
-    (702, 1, 0, 7),  // fetch_all + net + urls + s (scope) + tasks + u + t
-    (1467, 1, 0, 4), // tính_tổng + danh_sách + tổng + số
+    (226, 6, 0, 11), // type User derives Eq/Show + enum Shape derives Show + alias + newtype
+    // **VD-215 (2026-11-18)**: +12 dòng bảng quy tắc `{…}` sau bảng kiểu ⇒ mọi khối sau dịch +12.
+    (251, 1, 0, 4),  // fn total + R + rows + r (lambda)
+    (303, 0, 5, 6),  // x, count, a, b, name, age
+    (338, 0, 1, 4),  // r (arm1), r (arm2 = or-pattern dùng chung), w, h
+    (355, 0, 3, 3),  // e, domain, mail (if let)
+    (421, 1, 0, 5),  // greet + name + times + loud + s
+    (437, 0, 1, 3),  // f + x (lambda) + y
+    (488, 1, 0, 4),  // read_config + dir + text + cfg
+    (503, 0, 1, 2),  // cfg + err (else)
+    (554, 0, 3, 2),  // a, b
+    (568, 0, 2, 2),  // counter, inc
+    (590, 0, 0, 0),  // chỉ có `#!` + `#|` (chú thích)
+    (703, 1, 0, 5),  // backup_big + ctx + dir + files + f
+    (717, 1, 0, 7),  // fetch_all + net + urls + s (scope) + tasks + u + t
+    (1482, 1, 0, 4), // tính_tổng + danh_sách + tổng + số
+    // **R11 (VD-178)**: khối 1435 (`Entry(path: …)`) nay parse sạch ⇒ thêm vào bảng.
+    (1435, 6, 0, 14), // use ×2 + type Entry + fn main + test fn + ... (đo thật)
 ];
 
 fn doc_path() -> PathBuf {
@@ -385,7 +388,7 @@ fn ba_ca_err_dung_o_parse_khong_lower() {
 }
 
 // ---------------------------------------------------------------------------
-// 3) Điền kiểu literal (VD-43) + `T?` + `none`
+// 3) Điền kiểu literal (VD-43) + `T?` + `None`
 // ---------------------------------------------------------------------------
 
 fn expr_of(src: &str) -> HExpr {
@@ -465,12 +468,11 @@ fn kieu_cau_truc_va_option() {
     assert_eq!(def.fields[0].ty, Type::Str);
     assert_eq!(def.fields[1].ty, Type::Int);
     assert!(def.anonymous);
-    // `none` ⇒ Opt(None); `xs[0]?` ⇒ Try
-    match expr_of("none") {
-        HExpr::Opt {
-            value: None, ty, ..
-        } => assert!(ty.is_opt(), "`none` phải có kiểu `T?`"),
-        other => panic!("`none` phải là Opt(None), thật {other:?}"),
+    // `None` ⇒ **tên dựng sẵn** (hàm dựng `Opt`); từ khoá `none` đã **bỏ** (R2) ⇒ `VS0203` lúc hạ
+    // (ca sem `loi/none-bo`), vẫn hạ ra Opt(None) để biên dịch tiếp.
+    match expr_of("None") {
+        HExpr::Var { name, .. } => assert_eq!(name, "None"),
+        other => panic!("`None` phải là Var dựng sẵn, thật {other:?}"),
     }
     match expr_of("xs[0]?") {
         HExpr::Try { expr, .. } => assert!(matches!(*expr, HExpr::Index { .. })),

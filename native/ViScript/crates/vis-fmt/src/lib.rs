@@ -188,6 +188,20 @@ fn render(out: &ParseOutput) -> String {
         if la_chu_thich {
             // Chú thích: giữ nguyên văn **thân** (kể cả tab bên trong), chỉ bỏ khoảng trắng cuối.
             dst.push_str(t.text.trim_end());
+        } else if t.kind == Kind::Ident
+            && matches!(t.text.as_str(), "some" | "ok" | "err")
+            && toks.get(i + 1).is_some_and(|n| n.is_punct("("))
+        {
+            // **R1a/VD-212**: `some(`/`ok(`/`err(` ⇒ viết hoa chữ đầu (pattern nay là lỗi `VS0203`; fmt tự sửa).
+            let hoa = match t.text.as_str() {
+                "some" => "Some",
+                "ok" => "Ok",
+                _ => "Err",
+            };
+            dst.push_str(hoa);
+        } else if t.kind == Kind::Kw && t.text == "none" {
+            // **R2 (VD-178)**: từ khoá `none` đã bỏ — `vis fmt` sửa thành `None` (kèm `VS0203`).
+            dst.push_str("None");
         } else {
             dst.push_str(&t.text);
         }
