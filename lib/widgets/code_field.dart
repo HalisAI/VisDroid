@@ -319,7 +319,7 @@ class _CodeBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final keys = [
-      ('⇥', '    '),
+      ('Tab', '    '),
       ('{', '{}'),
       ('}', '}'),
       ('(', '()'),
@@ -351,11 +351,25 @@ class _CodeBar extends StatelessWidget {
           final (label, ins) = keys[i];
           return InkWell(
             onTap: () => onKey(ins),
-            borderRadius: BorderRadius.circular(6),
+            borderRadius: BorderRadius.circular(8),
             child: Container(
+              margin: const EdgeInsets.symmetric(vertical: 2),
               padding:
                   const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
               alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: Theme.of(context)
+                    .colorScheme
+                    .surfaceContainerHighest
+                    .withValues(alpha: 0.6),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: Theme.of(context)
+                      .colorScheme
+                      .outlineVariant
+                      .withValues(alpha: 0.4),
+                ),
+              ),
               child: Text(
                 label,
                 style: TextStyle(

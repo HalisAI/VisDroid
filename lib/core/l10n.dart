@@ -97,6 +97,13 @@ enum S {
   close,
   next,
   prev,
+  args,
+  duration,
+  checking,
+  outputEmpty,
+  noFileYet,
+  noFileHint,
+  filesCount,
 }
 
 const Map<S, String> _vi = {
@@ -127,7 +134,7 @@ const Map<S, String> _vi = {
   S.steps: 'Số bước',
   S.engineVersion: 'Phiên bản engine',
   S.theme: 'Chủ đề',
-  S.themeSystem: 'Theo hệ thống',
+  S.themeSystem: 'Hệ thống',
   S.themeLight: 'Sáng',
   S.themeDark: 'Tối',
   S.language: 'Ngôn ngữ',
@@ -192,6 +199,14 @@ const Map<S, String> _vi = {
   S.close: 'Đóng',
   S.next: 'Tiếp',
   S.prev: 'Trước',
+  S.args: 'Tham số',
+  S.duration: 'Thời gian',
+  S.checking: 'Đang kiểm tra…',
+  S.outputEmpty: 'Chưa có kết quả — bấm ▶ để chạy',
+  S.noFileYet: 'Chưa mở tệp nào',
+  S.noFileHint:
+      'Tạo tệp ViScript đầu tiên của bạn hoặc mở một ví dụ mẫu để bắt đầu.',
+  S.filesCount: 'tệp',
 };
 
 const Map<S, String> _en = {
@@ -288,6 +303,14 @@ const Map<S, String> _en = {
   S.close: 'Close',
   S.next: 'Next',
   S.prev: 'Previous',
+  S.args: 'Arguments',
+  S.duration: 'Time',
+  S.checking: 'Checking…',
+  S.outputEmpty: 'No output yet — tap ▶ to run',
+  S.noFileYet: 'No file opened',
+  S.noFileHint:
+      'Create your first ViScript file or open a bundled example to start.',
+  S.filesCount: 'files',
 };
 
 String t(BuildContext context, S key) {

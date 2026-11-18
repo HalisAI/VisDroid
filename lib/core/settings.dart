@@ -18,11 +18,17 @@ class PrefsStore {
   final Map<String, String> _map;
 
   static Future<PrefsStore> load() async {
-    final raw = await _channel
-        .invokeMethod<String>('get', {'key': 'json'});
-    return PrefsStore._(raw == null
-        ? <String, String>{}
-        : Map<String, String>.from(jsonDecode(raw) as Map));
+    Map<String, String> map = <String, String>{};
+    try {
+      final raw = await _channel
+          .invokeMethod<String>('get', {'key': 'json'});
+      if (raw != null) {
+        map = Map<String, String>.from(jsonDecode(raw) as Map);
+      }
+    } catch (_) {
+      // Không có platform channel (test/preview) — dùng store rỗng trong RAM.
+    }
+    return PrefsStore._(map);
   }
 
   String? get(String key) => _map[key];

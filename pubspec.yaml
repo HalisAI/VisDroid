@@ -2,7 +2,7 @@ name: visdroid
 description: "VisDroid — IDE ViScript cho Android, nhúng engine ViScript (.so) chạy tức thì."
 publish_to: 'none'
 
-version: 1.1.0+2
+version: 1.1.1+3
 
 environment:
   sdk: ^3.14.0

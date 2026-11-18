@@ -10,6 +10,12 @@ import 'package:flutter/services.dart' show MethodChannel, rootBundle;
 class VisProject {
   VisProject._(this.root);
 
+  /// Tạo dự án tại thư mục bất kỳ — dùng cho test/preview.
+  factory VisProject.at(Directory dir) {
+    if (!dir.existsSync()) dir.createSync(recursive: true);
+    return VisProject._(dir);
+  }
+
   /// Thư mục gốc dự án.
   final Directory root;
 

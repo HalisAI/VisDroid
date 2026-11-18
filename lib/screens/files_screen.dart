@@ -6,6 +6,7 @@ import 'package:material_ui/material_ui.dart';
 
 import '../core/l10n.dart';
 import '../core/project.dart';
+import '../widgets/name_dialog.dart';
 
 class FilesScreen extends StatefulWidget {
   const FilesScreen({
@@ -26,59 +27,98 @@ class FilesScreen extends StatefulWidget {
 class _FilesScreenState extends State<FilesScreen> {
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
     final files = widget.project.listFiles();
     return Scaffold(
+      appBar: AppBar(
+        title: Text(t(context, S.tabFiles)),
+        actions: [
+          Padding(
+            padding: const EdgeInsets.only(right: 14),
+            child: Center(
+              child: Text(
+                '${files.length} ${t(context, S.filesCount)}',
+                style: Theme.of(context)
+                    .textTheme
+                    .labelMedium
+                    ?.copyWith(color: cs.onSurfaceVariant),
+              ),
+            ),
+          ),
+        ],
+      ),
       body: Column(
         children: [
-          _header(context),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 6, 16, 8),
+            child: Row(
+              children: [
+                Icon(Icons.folder_outlined,
+                    size: 14, color: cs.outline),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    widget.project.root.path,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 11,
+                      color: cs.outline,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
           Expanded(
             child: files.isEmpty
-                ? Center(
-                    child: Text(
-                      t(context, S.welcomeBody),
-                      textAlign: TextAlign.center,
-                      style: Theme.of(context).textTheme.bodyMedium,
-                    ),
-                  )
+                ? _empty(context)
                 : ListView.separated(
                     itemCount: files.length,
-                    separatorBuilder: (_, _) => const Divider(height: 1),
+                    separatorBuilder: (_, _) =>
+                        Divider(height: 1, color: cs.outlineVariant.withValues(alpha: 0.4)),
                     itemBuilder: (context, i) {
                       final f = files[i];
                       final name = f.path.split('/').last;
                       final stat = f.statSync();
-                      final size = stat.size;
-                      final modified = stat.modified;
                       final isCurrent = name == widget.currentFile;
                       return ListTile(
+                        tileColor: isCurrent
+                            ? cs.primaryContainer.withValues(alpha: 0.35)
+                            : null,
                         leading: Icon(
                           Icons.description_outlined,
                           color: isCurrent
-                              ? Theme.of(context).colorScheme.primary
-                              : Theme.of(context).colorScheme.outline,
+                              ? cs.primary
+                              : cs.onSurfaceVariant,
                         ),
-                        title: Text(name),
+                        title: Text(
+                          name,
+                          style: const TextStyle(fontFamily: 'monospace'),
+                        ),
                         subtitle: Text(
-                          '$size B · '
-                          '${modified.day}/${modified.month}/${modified.year}',
+                          '${_fmtSize(stat.size)} · '
+                          '${stat.modified.day}/${stat.modified.month}/${stat.modified.year}',
                           style: Theme.of(context).textTheme.bodySmall,
                         ),
-                        trailing: PopupMenuButton<String>(
-                          onSelected: (v) async {
-                            if (v == 'rename') await _rename(name);
-                            if (v == 'delete') await _delete(name);
-                          },
-                          itemBuilder: (ctx) => [
-                            PopupMenuItem(
-                              value: 'rename',
-                              child: Text(t(ctx, S.rename)),
-                            ),
-                            PopupMenuItem(
-                              value: 'delete',
-                              child: Text(t(ctx, S.delete)),
-                            ),
-                          ],
-                        ),
+                        trailing: isCurrent
+                            ? Icon(Icons.check_circle, size: 18, color: cs.primary)
+                            : PopupMenuButton<String>(
+                                onSelected: (v) async {
+                                  if (v == 'rename') await _rename(name);
+                                  if (v == 'delete') await _delete(name);
+                                },
+                                itemBuilder: (ctx) => [
+                                  PopupMenuItem(
+                                    value: 'rename',
+                                    child: Text(t(ctx, S.rename)),
+                                  ),
+                                  PopupMenuItem(
+                                    value: 'delete',
+                                    child: Text(t(ctx, S.delete)),
+                                  ),
+                                ],
+                              ),
                         onTap: () => widget.onOpenFile(name),
                       );
                     },
@@ -86,39 +126,55 @@ class _FilesScreenState extends State<FilesScreen> {
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton(
+      floatingActionButton: FloatingActionButton.extended(
         heroTag: 'new-file',
         tooltip: t(context, S.newFile),
         onPressed: () => _create(),
-        child: const Icon(Icons.add),
+        icon: const Icon(Icons.note_add_outlined),
+        label: Text(t(context, S.newFile)),
       ),
     );
   }
 
-  Widget _header(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-      child: Row(
-        children: [
-          Text(
-            t(context, S.tabFiles),
-            style: Theme.of(context).textTheme.titleLarge,
-          ),
-          const Spacer(),
-          Text(
-            widget.project.root.path,
-            style: Theme.of(context)
-                .textTheme
-                .labelSmall
-                ?.copyWith(color: Theme.of(context).colorScheme.outline),
-          ),
-        ],
+  Widget _empty(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.folder_open_outlined,
+                size: 56, color: cs.outline),
+            const SizedBox(height: 12),
+            Text(
+              t(context, S.noFileYet),
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 6),
+            Text(
+              t(context, S.noFileHint),
+              textAlign: TextAlign.center,
+              style: Theme.of(context)
+                  .textTheme
+                  .bodyMedium
+                  ?.copyWith(color: cs.onSurfaceVariant),
+            ),
+          ],
+        ),
       ),
     );
+  }
+
+  String _fmtSize(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    return '${(bytes / 1024 / 1024).toStringAsFixed(1)} MB';
   }
 
   Future<void> _create() async {
-    final name = await _askFileName(
+    final name = await askFileName(
+      context,
       title: t(context, S.newFile),
       hint: t(context, S.fileNameHint),
     );
@@ -138,7 +194,8 @@ class _FilesScreenState extends State<FilesScreen> {
   }
 
   Future<void> _rename(String name) async {
-    final newName = await _askFileName(
+    final newName = await askFileName(
+      context,
       title: t(context, S.renameFile),
       hint: name,
       initial: name,
@@ -187,36 +244,6 @@ class _FilesScreenState extends State<FilesScreen> {
       setState(() {});
       _snack('${t(context, S.fileDeleted)}: $name');
     }
-  }
-
-  Future<String?> _askFileName({
-    required String title,
-    required String hint,
-    String? initial,
-  }) {
-    final ctrl = TextEditingController(text: initial ?? '');
-    return showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(title),
-        content: TextField(
-          controller: ctrl,
-          autofocus: true,
-          decoration: InputDecoration(hintText: hint),
-          onSubmitted: (v) => Navigator.pop(ctx, v),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: Text(t(ctx, S.cancel)),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, ctrl.text),
-            child: Text(t(ctx, S.confirm)),
-          ),
-        ],
-      ),
-    );
   }
 
   void _snack(String msg) {

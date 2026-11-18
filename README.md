@@ -6,6 +6,8 @@ VisDroid nhúng engine ViScript (biên dịch Rust thành `libvis_ffi.so`) thẳ
 
 ## Tính năng
 
+- **Màn thực thi riêng kiểu Pydroid**: bấm ▶ ở màn soạn thảo → sang màn chạy; Back quay lại code; tap lỗi nhảy tới dòng
+
 - **Chạy tức thì** — nút tam giác ▶ tự lưu rồi chạy; đường interp mặc định, tuỳ chọn đường VM (bytecode) trong Cài đặt.
 - **Tô màu cú pháp ViScript** — từ khoá, chuỗi có nội suy, số có đơn vị (`5mb`, `250ms`), chú thích `#`, doc-comment `##`; số dòng, thụt lề tự động, thanh phím nhanh (`⇥`, `{}`, `()`, `->`…).
 - **Quản lý tệp** — tạo/mở/đổi tên/xoá tệp `.vis`/`.vish` trong thư mục dự án riêng của app; gieo sẵn ví dụ mẫu lần đầu mở.

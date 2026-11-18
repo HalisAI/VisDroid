@@ -118,7 +118,24 @@ String _ffiInvoke(String which, String request) {
   throw StateError('lệnh FFI lạ: $which');
 }
 
-class VisEngine {
+/// Giao diện engine — cho phép thay engine thật bằng bản giả trong test.
+abstract class ScriptEngine {
+  Future<RunResult> runScript({
+    required String entry,
+    String? text,
+    required String dir,
+    List<String> args,
+    bool useVm,
+    bool strictCaps,
+    bool noExtern,
+  });
+
+  Future<List<Diag>> checkScript({required String entry, String? text});
+
+  Future<String> versionInfo();
+}
+
+class VisEngine implements ScriptEngine {
   /// Mở thư viện engine một lần cho mỗi isolate khi gọi lệnh đầu tiên.
   VisEngine();
 
@@ -136,6 +153,7 @@ class VisEngine {
 
   /// Chạy script: `entry` là đường dẫn tệp chính trên đĩa; `text` (nếu có)
   /// đè nội dung tệp chính để chạy buffer editor mà không cần lưu trước.
+  @override
   Future<RunResult> runScript({
     required String entry,
     String? text,
@@ -165,6 +183,7 @@ class VisEngine {
   }
 
   /// Phân tích tĩnh (nạp → hạ → tyck), không chạy — dùng cho nút Kiểm tra.
+  @override
   Future<List<Diag>> checkScript({
     required String entry,
     String? text,
@@ -182,6 +201,7 @@ class VisEngine {
   }
 
   /// Chuỗi nhận diện engine, ví dụ `ViScript 0.1.0`.
+  @override
   Future<String> versionInfo() async {
     final raw = await Isolate.run(() => _ffiInvoke('version', ''));
     final j = jsonDecode(raw) as Map<String, dynamic>;
