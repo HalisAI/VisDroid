@@ -5,7 +5,6 @@ library;
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:characters/characters.dart';
 import 'package:flutter/services.dart' show FilteringTextInputFormatter;
 import 'package:material_ui/material_ui.dart';
 

@@ -5,8 +5,7 @@ library;
 
 import 'dart:io';
 
-import 'package:flutter/services.dart' show rootBundle;
-import 'package:path_provider/path_provider.dart';
+import 'package:flutter/services.dart' show MethodChannel, rootBundle;
 
 class VisProject {
   VisProject._(this.root);
@@ -19,7 +18,9 @@ class VisProject {
   static Future<VisProject> instance() async {
     final cached = _instance;
     if (cached != null) return cached;
-    final docs = await getApplicationDocumentsDirectory();
+    const channel = MethodChannel('visdroid/filesDir');
+    final filesDir = await channel.invokeMethod<String>('get');
+    final docs = Directory(filesDir!);
     final dir = Directory('${docs.path}${Platform.pathSeparator}vis');
     if (!dir.existsSync()) dir.createSync(recursive: true);
     return _instance = VisProject._(dir);

@@ -7,8 +7,6 @@
 library;
 
 import 'package:material_ui/material_ui.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-
 import 'core/l10n.dart';
 import 'core/project.dart';
 import 'core/settings.dart';
@@ -19,7 +17,7 @@ import 'screens/settings_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  final prefs = await SharedPreferences.getInstance();
+  final prefs = await PrefsStore.load();
   runApp(VisDroidApp(state: AppState(prefs)));
 }
 
@@ -125,7 +123,6 @@ class _ShellState extends State<Shell> {
               noExtern: widget.state.noExtern,
               onFileOpened: (name) => _lastFileName = name,
               fontSize: widget.state.fontSize,
-              wordWrap: widget.state.wordWrap,
               autoSave: widget.state.autoSave,
             ),
             FilesScreen(
