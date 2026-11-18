@@ -13,7 +13,7 @@ permissions:
 jobs:
   build-apk:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
@@ -45,8 +45,9 @@ jobs:
         run: |
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;27.0.12077973"
 
+      # -v để log hiển thị tiến độ từng task gradle (sửa xong vấn đề chậm thì bỏ).
       - name: Build APK
-        run: flutter build apk --release
+        run: flutter build apk --release -v
 
       - name: Rename APK (kèm cầu chì kích thước)
         run: |
