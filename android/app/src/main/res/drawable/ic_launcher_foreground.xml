@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Lớp trước adaptive icon: ngoặc code trắng + ngôi sao vàng ViScript,
+     thu về vùng an toàn 66dp giữa khung 108dp (tỷ lệ 0.155 từ bản 512) -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <group
+        android:scaleX="0.155"
+        android:scaleY="0.155"
+        android:translateX="14.31"
+        android:translateY="14.3">
+        <path
+            android:pathData="M132,140 L88,140 L88,372 L132,372"
+            android:strokeColor="#FFFFFFFF"
+            android:strokeWidth="24"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round" />
+        <path
+            android:pathData="M380,140 L424,140 L424,372 L380,372"
+            android:strokeColor="#FFFFFFFF"
+            android:strokeWidth="24"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round" />
+        <path
+            android:pathData="M256,144 L282.5,225.5 L368.2,225.5 L298.9,275.9 L325.4,357.5 L256,307.1 L186.6,357.5 L213.1,275.9 L143.8,225.5 L229.5,225.5 Z"
+            android:strokeColor="#FFFFE680"
+            android:strokeWidth="4"
+            android:strokeLineJoin="round">
+            <aapt:attr name="android:fillColor"
+                xmlns:aapt="http://schemas.android.com/aapt">
+                <gradient
+                    android:type="linear"
+                    android:startX="256" android:startY="144"
+                    android:endX="256" android:endY="357.5"
+                    android:startColor="#FFFFE04A"
+                    android:endColor="#FFFFB800" />
+            </aapt:attr>
+        </path>
+    </group>
+</vector>

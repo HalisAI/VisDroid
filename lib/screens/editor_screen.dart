@@ -585,14 +585,10 @@ class EditorScreenState extends State<EditorScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Container(
-              width: 88,
-              height: 88,
-              decoration: BoxDecoration(
-                color: cs.primaryContainer.withValues(alpha: 0.5),
-                shape: BoxShape.circle,
-              ),
-              child: Icon(Icons.code_rounded, size: 46, color: cs.primary),
+            Image.asset(
+              'assets/visdroid-icon.png',
+              width: 96,
+              height: 96,
             ),
             const SizedBox(height: 20),
             Text(

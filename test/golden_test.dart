@@ -3,6 +3,7 @@
 /// xem lại giao diện: flutter test --update-goldens test/golden_test.dart
 library;
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -107,6 +108,26 @@ Future<void> main() async {
         .setMockMethodCallHandler(prefsCh,
             (m) async => m.method == 'get' ? jsonEncode(prefs) : null);
     final store = await PrefsStore.load();
+    // Giải mã logo qua I/O thật trước khi pump: đưa ảnh vào ImageCache với
+    // cùng key (scale 1.0) mà Image.asset sẽ dùng — nếu không, fake async
+    // không cho I/O hoàn thành và golden chụp khung ảnh trống.
+    await tester.runAsync(() async {
+      final stream = const AssetImage('assets/visdroid-icon.png')
+          .resolve(ImageConfiguration.empty);
+      final done = Completer<void>();
+      final listener = ImageStreamListener(
+        (img, _) { if (!done.isCompleted) done.complete(); },
+        onError: (Object e, StackTrace? st) {
+          if (!done.isCompleted) done.completeError(e, st ?? StackTrace.empty);
+        },
+      );
+      stream.addListener(listener);
+      try {
+        await done.future.timeout(const Duration(seconds: 5));
+      } finally {
+        stream.removeListener(listener);
+      }
+    });
     await tester.pumpWidget(VisDroidApp(
       state: AppState(store),
       engine: engine ?? MockEngine(stdoutText: 'Xin chào, ViScript!'),
