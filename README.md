@@ -63,11 +63,12 @@ License engine: MIT OR Apache-2.0 (giữ nguyên SPDX trong `native/ViScript`).
 ## Releases (GitHub Action)
 
 Workflow [`.github/workflows/release.yml`](.github/workflows/release.yml) tự chạy khi một
-release được publish: cài Flutter 3.50 + Rust (3 target Android) + NDK 27 trên
-`ubuntu-latest`, biên dịch lại engine ViScript cho 3 ABI (`native/build-so.sh all`),
-build APK release rồi **đính kèm APK vào chính bản phát hành đó**
-(`VisDroid-<tag>.apk`). Cũng chạy được thủ công bằng nút *Run workflow* (APK ra
-artifact thay vì attach).
+release được publish: cài Flutter 3.50 + JDK 17 + NDK 27 trên `ubuntu-latest`
+(Android SDK có sẵn trên runner), precache engine Android, build APK release rồi
+**đính kèm `VisDroid-<tag>.apk` vào chính bản phát hành đó**. Cũng chạy được thủ
+công bằng nút *Run workflow* (APK ra artifact thay vì attach).
 
-Máy local không cần NDK thật khi chỉ build APK (engine `.so` đã committed):
-`scripts/make_ndk_stub.sh <ndk-dir> 27.0.12077973` dựng stub đủ cho AGP.
+Lưu ý build local: cần **NDK thật** (`sdkmanager "ndk;27.0.12077973"`) vì AGP dùng
+`llvm-strip` của NDK để thu `libflutter.so` từ ~170MB còn ~10MB khi đóng gói —
+thiếu NDK thật thì APK sẽ nặng ~520MB. Engine `libvis_ffi.so` đã strip sẵn trong
+jniLibs (`native/build-so.sh` là công cụ biên dịch lại khi đổi Rust).

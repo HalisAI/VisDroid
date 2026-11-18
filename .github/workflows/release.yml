@@ -30,27 +30,37 @@ jobs:
           flutter-version: 3.50.0
           channel: stable
 
-      # Tải engine artifacts cho đúng variant release (libflutter.so ~8MB/ABI);
-      # không cache Flutter SDK — cache thiếu artifacts cho ra APK 500MB.
+      # Tải sẵn engine artifacts variant release. Không cache Flutter SDK.
       - name: Precache Android engine
         run: flutter precache --android --no-ios
 
       - name: Cache Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      # Engine libvis_ffi.so đã biên dịch sẵn và committed trong jniLibs (3 ABI).
-      # AGP chỉ cần NDK cho bước strip native libs khi đóng gói — dùng stub tối
-      # thiểu (source.properties + llvm-strip no-op) thay vì tải 2GB toolchain.
-      - name: Prepare NDK 27 stub
-        run: bash scripts/make_ndk_stub.sh "$ANDROID_HOME/ndk/27.0.12077973" 27.0.12077973
+      # NDK 27 thật là BẮT BUỘC: bản libflutter.so release trong cache của
+      # Flutter giữ nguyên debug symbols (~170MB/ABI); AGP dùng llvm-strip của
+      # NDK để thu về ~10MB khi đóng gói. Dùng đường dẫn đầy đủ tới sdkmanager
+      # vì runner không đưa sdkmanager vào PATH.
+      - name: Install NDK 27
+        run: |
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;27.0.12077973"
 
       - name: Build APK
         run: flutter build apk --release
 
-      - name: Rename APK
+      - name: Rename APK (kèm cầu chì kích thước)
         run: |
           TAG="${GITHUB_REF_NAME:-manual}"
-          mv build/app/outputs/flutter-apk/app-release.apk "VisDroid-${TAG}.apk"
+          APK=build/app/outputs/flutter-apk/app-release.apk
+          SIZE=$(stat -c%s "$APK")
+          echo "APK size: $SIZE bytes ($((SIZE / 1024 / 1024)) MB)"
+          # libflutter.so chưa strip ⇒ ~520MB; đã strip ⇒ ~75MB.
+          if [ "$SIZE" -gt 200000000 ]; then
+            echo "::error::APK quá lớn — libflutter.so chưa được strip (NDK thiếu?)"
+            unzip -l "$APK" | grep -E 'lib/.*\.so' || true
+            exit 1
+          fi
+          mv "$APK" "VisDroid-${TAG}.apk"
 
       # Đính kèm APK vào release vừa tạo (trigger release.published).
       - name: Attach APK to release

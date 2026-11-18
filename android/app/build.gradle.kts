@@ -25,14 +25,6 @@ android {
         versionName = flutter.versionName
     }
 
-    packaging {
-        jniLibs {
-            // libvis_ffi.so đã strip sẵn lúc build engine (native/build-so.sh) —
-            // không cần AGP strip/extract lại (NDK trên máy chỉ là stub).
-            keepDebugSymbols.add("**/*.so")
-        }
-    }
-
     buildTypes {
         release {
             // TODO: Add your own signing config for the release build.
