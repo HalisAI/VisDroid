@@ -2,8 +2,10 @@ name: Sync ViScript
 
 # Đồng bộ fork ViScript trong native/ViScript với upstream
 # vifast-oss/ViScript: chạy hằng ngày hoặc bấm Run workflow thủ công.
-# Nếu upstream có thay đổi: commit + tạo prerelease `engine-<sha>` —
-# workflow "Build APK" sẽ tự chạy và đính kèm APK vào release đó.
+# Nhánh main được bảo vệ bằng ruleset (chỉ owner push thẳng) nên sync
+# KHÔNG push thẳng nữa: commit vào nhánh `sync/engine`, mở PR về main,
+# và tạo prerelease `engine-<sha>` — workflow "Build APK" tự build
+# .so + APK preview từ nhánh đó; owner xem APK rồi duyệt PR là main cập nhật.
 on:
   schedule:
     - cron: '23 2 * * *' # 02:23 UTC hằng ngày
@@ -11,6 +13,7 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write
 
 concurrency:
   group: sync-viscript
@@ -50,19 +53,34 @@ jobs:
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Commit & push
+      - name: Commit vào nhánh sync/engine & push
         if: steps.sync.outputs.changed == 'true'
         run: |
           git config user.name "visdroid-cd"
           git config user.email "actions@users.noreply.github.com"
+          git checkout -B sync/engine
           git add native/ViScript
           git commit -m "chore(engine): đồng bộ ViScript upstream ${UP_SHA:0:12}" \
             -m "Upstream: vifast-oss/ViScript@${UP_SHA}. Gate cargo check (vis-cli, vis-ffi) đã pass."
-          git push
+          git push --force origin sync/engine
         env:
           UP_SHA: ${{ steps.sync.outputs.upstream_sha }}
 
-      # Tạo prerelease để workflow "Build APK" build .so + APK mới và đính kèm
+      # PR sync/engine → main để owner duyệt và merge (main chỉ owner push được)
+      - name: Tạo PR sync về main
+        if: steps.sync.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UP_SHA: ${{ steps.sync.outputs.upstream_sha }}
+        run: |
+          gh pr create --base main --head sync/engine \
+            --title "Đồng bộ ViScript upstream ${UP_SHA:0:12}" \
+            --body "Upstream: [vifast-oss/ViScript@${UP_SHA:0:12}](https://github.com/vifast-oss/ViScript/commit/${UP_SHA}).
+          Gate cargo check (vis-cli, vis-ffi) đã pass.
+          APK preview sẽ được đính vào prerelease \`engine-${UP_SHA:0:12}\` — xem ổn thì merge PR này." \
+            || echo "PR sync/engine đã tồn tại — commit mới đã được đẩy lên cùng PR."
+
+      # Tạo prerelease từ nhánh sync để workflow "Build APK" build .so + APK mới
       - name: Tạo release engine sync
         if: steps.sync.outputs.changed == 'true'
         env:
@@ -71,9 +89,9 @@ jobs:
         run: |
           gh release create "engine-${UP_SHA:0:12}" \
             --prerelease \
-            --target "$GITHUB_SHA" \
+            --target sync/engine \
             --title "Engine ViScript ${UP_SHA:0:12}" \
-            --notes "Đồng bộ fork ViScript trong \`native/ViScript\` với upstream [vifast-oss/ViScript@${UP_SHA:0:12}](https://github.com/vifast-oss/ViScript/commit/${UP_SHA})."
+            --notes "Đồng bộ fork ViScript trong \`native/ViScript\` với upstream [vifast-oss/ViScript@${UP_SHA:0:12}](https://github.com/vifast-oss/ViScript/commit/${UP_SHA}). APK preview build từ nhánh \`sync/engine\` — merge PR khi kiểm tra ổn."
 
       # Báo thất bại rõ ràng nếu gate không pass (upstream đổi API mà fork chưa theo kịp)
       - name: Báo lỗi gate
