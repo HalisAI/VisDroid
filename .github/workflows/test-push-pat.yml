@@ -1,0 +1,26 @@
+name: Test push bằng SYNC_PAT
+
+# Workflow tạm: xác nhận push bằng secret SYNC_PAT (actor = mhieuhonda,
+# nằm trong allowlist "Restrict who can push") đi qua protection của main.
+# Commit xoá chính nó — push thành công = test OK, file tự biến mất.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  push:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.SYNC_PAT }}
+
+      - name: Xoá chính mình + push bằng SYNC_PAT
+        run: |
+          git config user.name "visdroid-cd"
+          git config user.email "actions@users.noreply.github.com"
+          git rm -f .github/workflows/test-push-pat.yml
+          git commit -m "ci: xác nhận push bằng SYNC_PAT qua protection — dọn workflow test"
+          git push
