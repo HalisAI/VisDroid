@@ -73,7 +73,9 @@ jobs:
       - name: Tạo release engine sync
         if: steps.sync.outputs.changed == 'true'
         env:
-          GH_TOKEN: ${{ github.token }}
+          # PHẢI dùng PAT: event sinh từ GITHUB_TOKEN không kích hoạt workflow
+          # mới — với SYNC_PAT, release vừa publish sẽ bắn "Build APK" tự chạy.
+          GH_TOKEN: ${{ secrets.SYNC_PAT }}
           UP_SHA: ${{ steps.sync.outputs.upstream_sha }}
         run: |
           gh release create "engine-${UP_SHA:0:12}" \
