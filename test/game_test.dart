@@ -14,7 +14,8 @@ import 'package:visdroid/game/maze.dart';
 import 'package:visdroid/game/progress.dart';
 
 /// Route giải đã kiểm chứng bằng engine thật cho từng màn (id → stdout).
-const _solutions = {
+/// (`final` — route màn 6 dùng `* 3`, không const-eval được)
+final _solutions = {
   '1': 'tien 5\n',
   '2': 'tien 4\nphai\ntien 2\n',
   '3': 'tien 4\nphai\ntien 2\nphai\ntien 4\n',
