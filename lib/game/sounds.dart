@@ -4,9 +4,13 @@
 /// Thiết kế an toàn: thiếu plugin/thiết bị không âm thanh thì chơi im lặng,
 /// không bao giờ làm app chết (mọi lỗi nuốt trong try/catch). WAV do
 /// `scripts/gen_sfx.py` sinh — 44.1 kHz mono 16-bit, peak −6 dBFS.
+///
+/// API của soundpool 2.x: nạp ByteData qua rootBundle một lần, lưu soundId,
+/// play theo id (xem README của package).
 library;
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:soundpool/soundpool.dart';
 
 class SoundFx {
@@ -28,15 +32,16 @@ class SoundFx {
     if (_inited) return;
     _inited = true;
     try {
-      final pool = Soundpool.fromOptions(
-        options: const SoundpoolOptions(streamType: StreamType.game),
-      );
-      _step = await pool.load(AssetSource('game/sfx/step.wav'));
-      _pickup = await pool.load(AssetSource('game/sfx/pickup.wav'));
-      _win = await pool.load(AssetSource('game/sfx/win.wav'));
-      _fail = await pool.load(AssetSource('game/sfx/fail.wav'));
-      _click = await pool.load(AssetSource('game/sfx/click.wav'));
-      _unlock = await pool.load(AssetSource('game/sfx/unlock.wav'));
+      final pool = Soundpool(streamType: StreamType.music);
+      _step = await pool.load(await rootBundle.load('assets/game/sfx/step.wav'));
+      _pickup =
+          await pool.load(await rootBundle.load('assets/game/sfx/pickup.wav'));
+      _win = await pool.load(await rootBundle.load('assets/game/sfx/win.wav'));
+      _fail = await pool.load(await rootBundle.load('assets/game/sfx/fail.wav'));
+      _click =
+          await pool.load(await rootBundle.load('assets/game/sfx/click.wav'));
+      _unlock =
+          await pool.load(await rootBundle.load('assets/game/sfx/unlock.wav'));
       _pool = pool;
     } catch (e) {
       debugPrint('SoundFx init bỏ qua: $e');
