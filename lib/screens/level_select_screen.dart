@@ -13,6 +13,7 @@ import '../game/game_theme.dart';
 import '../game/levels.dart';
 import '../game/maze.dart';
 import '../game/progress.dart';
+import '../game/sounds.dart';
 import '../game/sprites.dart';
 import 'maze_screen.dart';
 
@@ -38,6 +39,7 @@ class _LevelSelectScreenState extends State<LevelSelectScreen> {
   @override
   void initState() {
     super.initState();
+    SoundFx.instance.init();
     SpriteSet.instance.load().then((_) {
       if (mounted) setState(() => _ready = true);
     });

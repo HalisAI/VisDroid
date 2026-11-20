@@ -25,6 +25,7 @@ import '../game/game_theme.dart';
 import '../game/levels.dart';
 import '../game/maze.dart';
 import '../game/progress.dart';
+import '../game/sounds.dart';
 import '../game/sprites.dart';
 import '../widgets/code_field.dart';
 
@@ -86,6 +87,7 @@ class _MazeScreenState extends State<MazeScreen> with TickerProviderStateMixin {
     _levelIndex = widget.levelIndex.clamp(0, kGameLevels.length - 1);
     _reloadController();
     _step.addStatusListener(_onStepStatus);
+    SoundFx.instance.init();
   }
 
   void _reloadController() {
@@ -139,6 +141,7 @@ class _MazeScreenState extends State<MazeScreen> with TickerProviderStateMixin {
   // ------------------------------------------------------------------
 
   Future<void> _run() async {
+    SoundFx.instance.click();
     if (_running) {
       // Đang chạy → nút thành DỪNG (đóng băng tại frame hiện tại).
       _step.stop();
@@ -219,6 +222,14 @@ class _MazeScreenState extends State<MazeScreen> with TickerProviderStateMixin {
       _prevFrame = oc.frames[_frameIdx];
       _frameIdx++;
     });
+    // Âm theo hành động: nhặt ngọc có chime riêng, bước đi blip ngắn.
+    final cur = oc.frames[_frameIdx];
+    final prev = oc.frames[_frameIdx - 1];
+    if (cur.picked.length > prev.picked.length) {
+      SoundFx.instance.pickup();
+    } else {
+      SoundFx.instance.step();
+    }
     _step.duration = Duration(milliseconds: 360 ~/ _speed);
     _step.forward(from: 0);
   }
@@ -237,6 +248,7 @@ class _MazeScreenState extends State<MazeScreen> with TickerProviderStateMixin {
       widget.progress.recordWin(_level, _stepsTaken);
       _saveCode();
       HapticFeedback.mediumImpact();
+      SoundFx.instance.win();
       _winAnim.forward(from: 0);
       setState(() => _showWin = true);
     }
@@ -245,6 +257,7 @@ class _MazeScreenState extends State<MazeScreen> with TickerProviderStateMixin {
   void _fail(String msg) {
     if (!mounted) return;
     HapticFeedback.heavyImpact();
+    SoundFx.instance.fail();
     _shake.forward(from: 0);
     setState(() {
       _banner = msg;
@@ -336,6 +349,7 @@ class _MazeScreenState extends State<MazeScreen> with TickerProviderStateMixin {
   }
 
   void _nextLevel() {
+    SoundFx.instance.unlock();
     if (_levelIndex + 1 >= kGameLevels.length) {
       _back();
       return;
@@ -594,7 +608,10 @@ class _MazeScreenState extends State<MazeScreen> with TickerProviderStateMixin {
   Widget _speedChip(BuildContext context, int speed) {
     final selected = _speed == speed;
     return GestureDetector(
-      onTap: () => setState(() => _speed = speed),
+      onTap: () {
+        SoundFx.instance.click();
+        setState(() => _speed = speed);
+      },
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 9),
         decoration: BoxDecoration(
