@@ -356,6 +356,9 @@ fn chay(
                             ngoai_host,
                             Some(&mut fs),
                             Some(&mut net),
+                            // VD-241 (Gate 1): VisDroid không gắn host CSDL —
+                            // `None` ⇒ std.sqlite.* ⇒ VS0604 theo cap.
+                            None,
                             &quyen.gia_tri(),
                         ),
                         Err(e) => {
@@ -379,6 +382,9 @@ fn chay(
                         ngoai_host,
                         Some(&mut fs),
                         Some(&mut net),
+                        // VD-241 (Gate 1): VisDroid không gắn host CSDL —
+                        // `None` ⇒ std.sqlite.* ⇒ VS0604 theo cap.
+                        None,
                         &quyen.gia_tri(),
                     )
                 };
