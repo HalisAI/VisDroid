@@ -58,6 +58,7 @@ jobs:
           fi
 
       - name: Commit & push
+        id: push
         if: steps.sync.outputs.changed == 'true'
         run: |
           git config user.name "visdroid-cd"
@@ -66,6 +67,7 @@ jobs:
           git commit -m "chore(engine): đồng bộ ViScript upstream ${UP_SHA:0:12}" \
             -m "Upstream: vifast-oss/ViScript@${UP_SHA}. Gate cargo check (vis-cli, vis-ffi) đã pass."
           git push
+          echo "synced_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
         env:
           UP_SHA: ${{ steps.sync.outputs.upstream_sha }}
 
@@ -73,14 +75,14 @@ jobs:
       - name: Tạo release engine sync
         if: steps.sync.outputs.changed == 'true'
         env:
-          # PHẢI dùng PAT: event sinh từ GITHUB_TOKEN không kích hoạt workflow
-          # mới — với SYNC_PAT, release vừa publish sẽ bắn "Build APK" tự chạy.
-          GH_TOKEN: ${{ secrets.SYNC_PAT }}
+          GH_TOKEN: ${{ github.token }}
           UP_SHA: ${{ steps.sync.outputs.upstream_sha }}
         run: |
+          # Tag trỏ vào commit sync vừa push (engine mới + lib.rs mới khớp nhau),
+          # không phải GITHUB_SHA (commit trước sync — engine/lib lệch nhau).
           gh release create "engine-${UP_SHA:0:12}" \
             --prerelease \
-            --target "$GITHUB_SHA" \
+            --target "${{ steps.push.outputs.synced_sha }}" \
             --title "Engine ViScript ${UP_SHA:0:12}" \
             --notes "Đồng bộ fork ViScript trong \`native/ViScript\` với upstream [vifast-oss/ViScript@${UP_SHA:0:12}](https://github.com/vifast-oss/ViScript/commit/${UP_SHA})."
 
