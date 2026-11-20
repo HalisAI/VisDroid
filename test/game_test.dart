@@ -120,14 +120,15 @@ void main() {
   });
 
   group('simulate — thất bại có dạy học', () {
-    test('đâm tường → fail + frame bump, robot đứng yên', () {
+    test('đâm tường → fail + frame bump, robot dừng ở ô cuối hợp lệ', () {
       final pr = parseCommands('tien 9\n');
       final oc = simulate(_level('1'), pr.cmds);
       expect(oc.win, isFalse);
       expect(oc.failMsg, contains('đâm tường'));
       expect(oc.failStep, 1);
       expect(oc.frames.last.bump, isTrue);
-      expect(oc.frames.last.at, _level('1').start);
+      // Màn 1: S(1,1) → đi east tới ô (6,1) liền trước tường (7,1) rồi bump.
+      expect(oc.frames.last.at, const Cell(6, 1));
     });
 
     test('nhặt khi không có đồ → fail', () {
