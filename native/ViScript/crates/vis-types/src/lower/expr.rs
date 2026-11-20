@@ -137,6 +137,7 @@ impl<'a> Lowerer<'a> {
             NodeKind::RecordLit => {
                 let mut fields: Vec<(String, HExpr)> = Vec::new();
                 let mut defs: Vec<FieldDef> = Vec::new();
+                let mut seen = std::collections::HashSet::with_capacity(8);
                 for f in node.children().filter(|n| n.kind == NodeKind::RecordField) {
                     let name = self.decl_name(f).unwrap_or_default();
                     let value = match f.children().next() {
@@ -147,6 +148,13 @@ impl<'a> Lowerer<'a> {
                             self.lower_var_use(&n2, f.span)
                         }
                     };
+                    if !seen.insert(name.clone()) {
+                        self.diag(
+                            &vis_diag::TYPE_CODES[4],
+                            format!("trường `{name}` xuất hiện nhiều lần trên bản ghi ẩn danh"),
+                            f.span,
+                        );
+                    }
                     defs.push(FieldDef {
                         name: name.clone(),
                         ty: self.type_of(&value),
@@ -255,6 +263,11 @@ impl<'a> Lowerer<'a> {
                 } = &callee
                 {
                     if let HExpr::Var { name: m, .. } = &**base {
+                        // **VD-223 (điểm 2, amendment VD-224)**: gọi `str.join(…)` luôn rơi về
+                        // module std khi tài liệu đã `use std.str` — vị trí module là ý định;
+                        // user bind chỉ ảnh hưởng tới **dùng trần** tên (`str(…)`) — gọi trùng
+                        // `str(…)` sẽ là `VS0412` nếu `str` là biến (đã có thông điệp riêng).
+                        // Tên bị che ở vị trí module được báo **lúc khai báo** bằng `VS0211`.
                         if self.opts.std_mods.iter().any(|x| x == m) {
                             return self.std_call_named(m.clone(), f.clone(), args, named, span);
                         }
@@ -523,11 +536,26 @@ impl<'a> Lowerer<'a> {
                     }
                     i = end + 1;
                 }
-                '\\' if !no_escape => {
-                    let (c2, dung) = giai_escape(sau);
-                    chu.push(c2);
-                    i += n + dung;
-                }
+                '\\' if !no_escape => match giai_escape(sau) {
+                    Ok((c2, dung)) => {
+                        chu.push(c2);
+                        i += n + dung;
+                    }
+                    Err(_) => {
+                        let file = self.file;
+                        self.diag(
+                                &vis_diag::CODES[1],
+                                "escape chuỗi không hợp lệ (`\\u{XXXXXX}`?) (§3) — `vis explain VS0102`".to_string(),
+                                Span::new_file(
+                                    file,
+                                    span.start + ngoac + i,
+                                    span.start + ngoac + (i + n),
+                                ),
+                            );
+                        hong = true;
+                        i += n + 1;
+                    }
+                },
                 _ => {
                     chu.push(c);
                     i += n;
@@ -780,10 +808,36 @@ impl<'a> Lowerer<'a> {
             HExpr::Var { name, .. } => {
                 // **R11 (VD-178)**: `U(n: 1)` — dựng bản ghi theo **tên kiểu**.
                 if !named.is_empty() {
+                    if name == "RowSet" && !self.sqlite_duoc_thay() {
+                        // **VD-241**: `RowSet` thuộc module `std.sqlite` — dựng ngoài phạm vi ⇒
+                        // lỗi biên dịch rõ ràng, không âm thầm thành tên lạ.
+                        self.diag(
+                            &NAME_CODES[0],
+                            "không thấy tên `RowSet`: module `std.sqlite` chưa được `use`"
+                                .to_string(),
+                            span,
+                        );
+                        return HExpr::Error { span };
+                    }
                     if let Some((_, rid)) = self.rec_names.iter().find(|(n, _)| n == name).cloned()
                     {
                         // **R5a (VD-178)**: trường **thiếu** lấy **giá trị mặc định** của khai báo.
                         let mut fields = named;
+                        // **VD-241 §6/B-B (A0, 2026-11-19)**: trường trùng tên ⇒ lỗi biên dịch.
+                        let mut seen = std::collections::HashSet::with_capacity(fields.len());
+                        for (n, _) in &fields {
+                            if !seen.insert(n.clone()) {
+                                self.diag(
+                                    &vis_diag::TYPE_CODES[4],
+                                    format!(
+                                        "trường `{}` xuất hiện nhiều lần trên bản ghi `{}`",
+                                        n, name
+                                    ),
+                                    span,
+                                );
+                                return HExpr::Error { span };
+                            }
+                        }
                         if let Some(rec) = self.items.iter().find_map(|it| match it {
                             crate::hir::HItem::Rec(r) if r.id == rid => Some(r.clone()),
                             _ => None,
@@ -792,6 +846,17 @@ impl<'a> Lowerer<'a> {
                                 if !fields.iter().any(|(n, _)| n == &f.name) {
                                     if let Some(d) = &f.default {
                                         fields.push((f.name.clone(), d.clone()));
+                                    } else {
+                                        // **VD-241 §6/B-B (A0, 2026-11-19)**: trường bắt buộc thiếu ⇒ lỗi tĩnh.
+                                        self.diag(
+                                            &vis_diag::TYPE_CODES[4],
+                                            format!(
+                                                "thiếu trường bắt buộc `{}` của bản ghi `{}`",
+                                                f.name, name
+                                            ),
+                                            span,
+                                        );
+                                        return HExpr::Error { span };
                                     }
                                 }
                             }
@@ -809,14 +874,31 @@ impl<'a> Lowerer<'a> {
                     .find(|(n, _, _)| n == name)
                     .cloned()
                 {
-                    return HExpr::EnumLit {
-                        enum_id: Some(eid),
-                        path: vec![name.clone()],
-                        variant: name.clone(),
-                        args,
-                        ty: Type::Enum(eid),
-                        span,
-                    };
+                    // **VD-241**: ctor dựng sẵn của enum `SqlValue` (thuộc module `std.sqlite`)
+                    // ngoài phạm vi `use std.sqlite` ⇒ **không** phân giải thành biến thể — rơi
+                    // qua đường gọi hàm (báo lỗi tên), tránh âm thầm tạo `SqlValue` "miễn phí".
+                    let la_sqlvalue = self.sqlvalue_id() == Some(eid);
+                    if la_sqlvalue && !self.sqlite_duoc_thay() {
+                        // rơi xuống nhánh gọi hàm thường
+                    } else {
+                        // **VD-241 §3/T3 (A0, 2026-11-19)**: giữ **tên enum** cho `MakeEnum` — VM dựng
+                        // `Value::Enum` đúng tên (ví dụ `Arr`/`Str` ⇒ `Json`), không còn tạo biệt danh
+                        // `Arr.Arr` (trước đây json.encode của VM rơi vào fallback `{"variant":…}`).
+                        let e_path = self
+                            .enum_names
+                            .iter()
+                            .find(|(_, id)| id == &eid)
+                            .map(|(n, _)| n.clone())
+                            .unwrap_or_else(|| name.clone());
+                        return HExpr::EnumLit {
+                            enum_id: Some(eid),
+                            path: vec![e_path],
+                            variant: name.clone(),
+                            args,
+                            ty: Type::Enum(eid),
+                            span,
+                        };
+                    }
                 }
             }
             HExpr::Field {
@@ -835,6 +917,16 @@ impl<'a> Lowerer<'a> {
                         .find(|(n, _)| n == enum_name)
                         .cloned()
                     {
+                        // **VD-241**: ctor có tiền tố `SqlValue.` ngoài `use std.sqlite` ⇒ từ chối.
+                        if enum_name == "SqlValue" && !self.sqlite_duoc_thay() {
+                            self.diag(
+                                &NAME_CODES[0],
+                                "không thấy tên `SqlValue`: module `std.sqlite` chưa được `use`"
+                                    .to_string(),
+                                span,
+                            );
+                            return HExpr::Error { span };
+                        }
                         return HExpr::EnumLit {
                             enum_id: Some(eid),
                             path: vec![enum_name.clone()],
@@ -981,20 +1073,39 @@ fn first_known(it: impl Iterator<Item = Type>) -> Type {
 
 /// Giải một escape trong chuỗi (`\n`, `\t`, `\"`, `\\`, `\{`, …) — trả (ký tự, số byte đã dùng
 /// sau dấu `\`).
-fn giai_escape(sau: &str) -> (char, usize) {
+/// **VD-241 §3/T4 (A0, 2026-11-19)** — giải mã escape sa `\`; hợp lệ thì trả `(ký tự, số byte)`,
+/// sai hoặc không-known-escape thì `Err(VS0102)`. Hỗ trợ: `\n \t \r \0 \\ \" \' \{ \} \u{…}`.
+fn giai_escape(sau: &str) -> Result<(char, usize), u16> {
     let mut it = sau.chars();
     match it.next() {
-        Some('n') => ('\n', 1),
-        Some('t') => ('\t', 1),
-        Some('r') => ('\r', 1),
-        Some('0') => ('\0', 1),
-        Some('\\') => ('\\', 1),
-        Some('"') => ('"', 1),
-        Some('\'') => ('\'', 1),
-        Some('{') => ('{', 1),
-        Some('}') => ('}', 1),
-        Some(c) => (c, c.len_utf8()),
-        None => ('\\', 0),
+        Some('n') => Ok(('\n', 1)),
+        Some('t') => Ok(('\t', 1)),
+        Some('r') => Ok(('\r', 1)),
+        Some('0') => Ok(('\0', 1)),
+        Some('\\') => Ok(('\\', 1)),
+        Some('"') => Ok(('"', 1)),
+        Some('\'') => Ok(('\'', 1)),
+        Some('{') => Ok(('{', 1)),
+        Some('}') => Ok(('}', 1)),
+        Some('u') => {
+            // `\u{XXXXXX}` — 1..=6 chữ hex; giá trị phải là Unicode scalar hợp lệ.
+            let rest = &sau[1..];
+            if !rest.starts_with('{') {
+                return Err(102);
+            }
+            let Some(close) = rest.find('}') else {
+                return Err(102);
+            };
+            let hex = &rest[1..close];
+            if hex.is_empty() || hex.len() > 6 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+                return Err(102);
+            }
+            let v = u32::from_str_radix(hex, 16).map_err(|_| 102u16)?;
+            let ch = char::from_u32(v).ok_or(102u16)?;
+            Ok((ch, 1 + 1 + hex.len() + 1)) // 'u' + '{' + hex + '}'
+        }
+        Some(_) => Err(102), // escape không hợp lệ — trùng luật ở lexer (VS0102).
+        None => Err(102),
     }
 }
 

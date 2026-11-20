@@ -25,7 +25,16 @@ fn ghi(d: &Path, ten: &str, src: &str) {
 }
 
 fn uri(d: &Path, ten: &str) -> String {
-    format!("file://{}", d.join(ten).display())
+    // **VD-241 § fix(Windows/CRLF #psvn-A5)**: on Windows, LSP URIs use forward slashes:
+    //   `C:\Users\ps\foo.vis` → `file:///C:/Users/ps/foo.vis`
+    // Written WITHOUT `#[cfg]` so every platform type-checks the same code (tránh lỗi
+    // "biên dịch được trên Linux nhưng gãy trên Windows" — psvn bắt được ở ba11a90).
+    let p = d.join(ten).to_string_lossy().to_string();
+    if std::env::consts::OS == "windows" {
+        format!("file:///{}", p.replace('\\', "/"))
+    } else {
+        format!("file://{}", p)
+    }
 }
 
 fn khung(body: &str) -> String {

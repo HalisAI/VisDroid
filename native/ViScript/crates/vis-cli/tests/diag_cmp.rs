@@ -49,9 +49,20 @@ use std::process::Command;
 // **SỬA KÈM LÝ DO (R20b, VD-178)**: 463 → **464** (+`list/duyet-nang-cao` xanh).
 // **SỬA KÈM LÝ DO (R19b, VD-178)**: 464 → **465** (+`loi/doi-dau-tran` — lỗi **lúc chạy** VS0507).
 // **SỬA KÈM LÝ DO (R2, VD-178)**: 465 → **469** (+3 xanh `optional/` + `loi/none-bo` — lỗi **biên dịch** VS0203).
-const TONG: usize = 469;
-const XANH: usize = 383;
-const LOI_BIEN_DICH: usize = 51;
+// **SỬA KÈM LÝ DO (VD-240-b, 2026-11-19)**: 469 → **473** (+4 ca grid `async/grid-*`).
+// **SỬA KÈM LÝ DO (VD-241 §3, 2026-11-19)**: 473 → **483** (+10 ca Option lồng thật).
+// **SỬA KÈM LÝ DO (VD-241 §7, 2026-11-19)**: 483 → **486** (+3 ca `optional/`: `none-three-states`,
+//   `long-none-param`, `long-none-return`; đổi `long-reject-e` thành `long-none-e` hợp lệ) —
+//   ⇒ **398 xanh / 53 lỗi biên dịch / 35 lỗi lúc chạy** (`long-reject-e` rời nhóm lỗi biên dịch).
+// **SỬA KÈM LÝ DO (VD-241 đợt coercion, 2026-11-19)**: 486 → **487** (+1 xanh `optional/long-option-matrix.vis`) —
+//   ⇒ **399 xanh / 53 lỗi biên dịch / 35 lỗi lúc chạy**.
+// **SỬA KÈM LÝ DO (VD-241 Gate 1, 2026-11-19)**: 487 → **514** (+27 ca nhóm mới **`sqlite/`**:
+//   19 xanh + 8 lỗi lúc chạy `VS0501`) ⇒ **418 xanh / 53 lỗi biên dịch / 43 lỗi lúc chạy**.
+// **SỬA KÈM LÝ DO (VD-241 pre-merge, 2026-11-19)**: 514 → **525** (+11 ca `sqlite/`, mọi lỗi dữ liệu
+//   nay là `Result.Err` ⇒ 8 `.err` VS0501 đổi thành `.out` xanh) ⇒ **437 xanh / 53 lỗi biên dịch / 35 lỗi lúc chạy**.
+const TONG: usize = 525;
+const XANH: usize = 437;
+const LOI_BIEN_DICH: usize = 53;
 const LOI_LUC_CHAY: usize = 35;
 /// **SỬA KÈM LÝ DO (ST-89)**: VM **đã có host `Ngoai`** ⇒ **0** ca xanh cần host bị `VS0604`.
 const XANH_CAN_HOST: usize = 0;
@@ -76,6 +87,19 @@ struct ChanDoan {
 /// thành ký tự thật để so **ngữ nghĩa**, không so cách hiển thị.
 ///
 /// `check` in TAP với `` `\n` `` (escape), `run` in **xuống dòng thật**; `\t`/`\\` tương tự.
+///
+/// PATH có thêm thư mục chứa `test-child` — cho fixture `.vish` gọi `test-child` bare.
+fn path_voi_tc() -> std::ffi::OsString {
+    let tc = std::path::Path::new(env!("CARGO_BIN_EXE_test-child"));
+    let mut muc: Vec<std::path::PathBuf> =
+        vec![tc.parent().expect("test-child parent").to_path_buf()];
+    let cur = std::env::var_os("PATH").unwrap_or_default();
+    for p in std::env::split_paths(&cur) {
+        muc.push(p);
+    }
+    std::env::join_paths(muc).expect("join PATH")
+}
+
 fn chuan_hoa(s: &str) -> String {
     let b = s.as_bytes();
     let mut out: Vec<u8> = Vec::with_capacity(b.len());
@@ -135,6 +159,7 @@ fn tep_sem() -> Vec<PathBuf> {
 
 fn chay(args: &[&std::ffi::OsStr]) -> (i32, String) {
     let mut c = Command::new(env!("CARGO_BIN_EXE_vis"));
+    c.env("PATH", path_voi_tc());
     for a in args {
         c.arg(a);
     }

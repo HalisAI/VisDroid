@@ -6,7 +6,7 @@
 //! như trước; `interp.rs` chỉ còn phần câu lệnh/biểu thức.
 
 use vis_syntax::Span;
-use vis_types::hir::*;
+use vis_types::{hir::*, ty::Type};
 
 use crate::interp::{builtin_name, Abort, Args, Interp, Trap, MAX_CALL_DEPTH, R, RT};
 use crate::value::*;
@@ -179,8 +179,20 @@ impl<'a> Interp<'a> {
         }
         self.env = saved_env;
         match r {
-            Ok(v) => Ok(v),
-            Err(Abort::Ret(v)) => Ok(v),
+            Ok(v) => {
+                if c.ret_depth > 0 {
+                    Ok(opt_lift_maybe(v, c.ret_depth))
+                } else {
+                    Ok(v)
+                }
+            }
+            Err(Abort::Ret(v)) => {
+                if c.ret_depth > 0 {
+                    Ok(opt_lift_maybe(v, c.ret_depth))
+                } else {
+                    Ok(v)
+                }
+            }
             Err(t) => Err(t),
         }
     }
@@ -262,6 +274,11 @@ impl<'a> Interp<'a> {
                     }
                 },
             };
+            // **VD-228b**: tham số annot `T?` — nâng giá trị plain ở biên hàm (giống `let` + `-> T?`).
+            let v = match &p.ty {
+                Type::Opt(_) => opt_lift_maybe(v, opt_depth_ty(&p.ty)),
+                _ => v,
+            };
             self.env.borrow_mut().insert(p.sym, v);
             if p.is_var_self {
                 self.mutable.insert(p.sym);
@@ -279,9 +296,34 @@ impl<'a> Interp<'a> {
             }
         }
         match r {
-            Ok(v) => Ok(v),
-            Err(Abort::Ret(v)) => Ok(v),
+            Ok(v) => match &f.ret {
+                Type::Opt(_) => Ok(opt_lift_maybe(v, opt_depth_ty(&f.ret))),
+                _ => Ok(v),
+            },
+            Err(Abort::Ret(v)) => match &f.ret {
+                Type::Opt(_) => Ok(opt_lift_maybe(v, opt_depth_ty(&f.ret))),
+                _ => Ok(v),
+            },
             Err(t) => Err(t),
         }
     }
+}
+
+/// **VD-241 §3 (A0, 2026-11-19)** — tự nâng `T → T? → T??…` tại các biên hàm/annot (VD-227/228).
+/// Đích `Opt(_)` bọc giá trị tới **ít nhất** đủ lớp của annot. Lõi được giữ đúng (giá trị đã là
+/// `Opt`/`Result` thuộc đúng lớp đó không bị bọc thêm). (Checker từ chối từ nguồn lúc < `annot−1`
+/// lớp — nên vòng lặp chỉ là kỹ thuật, không còn lớp > 1/chuyển đổi cho các chương trình hợp lệ.)
+pub(in crate::interp) fn opt_lift_maybe(v: Value, depth_target: usize) -> Value {
+    crate::lift::lift_opt(v, depth_target)
+}
+
+/// Số lớp `Opt` của một **đích kiểu** (đếm từ ngoài vào).
+pub(in crate::interp) fn opt_depth_ty(t: &vis_types::Type) -> usize {
+    let mut d = 0;
+    let mut cur = t;
+    while let vis_types::Type::Opt(inner) = cur {
+        d += 1;
+        cur = inner;
+    }
+    d
 }

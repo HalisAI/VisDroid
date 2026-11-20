@@ -11,6 +11,10 @@
 use vis_syntax::Span;
 use vis_types::hir::BinOp;
 
+pub use crate::builtin_db::DbHost;
+
+pub(crate) use crate::builtin_ls::{chuoi_quyen, thoi_gian_utc};
+
 use crate::interp::{Abort, Trap, DIV0, OVERFLOW, RT};
 use crate::value::Value;
 
@@ -67,54 +71,6 @@ pub struct MucFs {
     pub is_file: bool,
     /// ST-46: bit quyền kiểu POSIX (0 = chưa biết ⇒ in `-` trong `ls --long`).
     pub mode: u32,
-}
-
-/// `ls --long` (ST-46): quyền `rw-r--r--` từ bit POSIX; `0` ⇒ `-`.
-pub fn chuoi_quyen(mode: u32) -> String {
-    if mode == 0 {
-        return "-".to_string();
-    }
-    let mut s = String::with_capacity(9);
-    for (bit, ch) in [
-        (0o400, 'r'),
-        (0o200, 'w'),
-        (0o100, 'x'),
-        (0o040, 'r'),
-        (0o020, 'w'),
-        (0o010, 'x'),
-        (0o004, 'r'),
-        (0o002, 'w'),
-        (0o001, 'x'),
-    ] {
-        s.push(if mode & bit != 0 { ch } else { '-' });
-    }
-    s
-}
-
-/// `ls --long` (ST-46): `YYYY-MM-DD HH:MM` theo **UTC** (civil-from-days, không thêm crate).
-pub fn thoi_gian_utc(ns: i64) -> String {
-    if ns == 0 {
-        return "-".to_string();
-    }
-    let mut giay = ns.div_euclid(1_000_000_000);
-    let ngay = giay.div_euclid(86_400);
-    giay = giay.rem_euclid(86_400);
-    // Howard Hinnant: days since 1970-01-01 → (y, m, d).
-    let z = ngay + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = if m <= 2 { y + 1 } else { y };
-    format!(
-        "{y:04}-{m:02}-{d:02} {:02}:{:02}",
-        giay / 3600,
-        (giay % 3600) / 60
-    )
 }
 
 /// **ST-137 (VD-141)**: đường dẫn **thật của chính handle** đã mở — để tầng quyền quyết định trên
@@ -219,6 +175,12 @@ pub trait Host {
 
     /// **ST-63 (VD-105)**: host mạng (TCP). Mặc định: `None` ⇒ `VS0604`.
     fn net(&mut self) -> Option<&mut dyn NetHost> {
+        None
+    }
+
+    /// **VD-241 (Gate 1)**: host cơ sở dữ liệu (SQLite bundled ở `vis-cli`). Mặc định: `None` ⇒
+    /// `VS0604` (host không có SQLite vẫn báo lỗi rõ, không panic, không hỏng tính năng khác).
+    fn db(&mut self) -> Option<&mut dyn DbHost> {
         None
     }
 
@@ -454,41 +416,43 @@ fn arith(op: BinOp, l: Value, r: Value, span: Span) -> crate::interp::R<Value> {
         (l, r) => (l, r),
     };
     // `percent` với số: `percent * int -> int`, `percent * size -> size` (§3.6).
+    // **ST-240 / VD-243 (#172)**: mọi đường `f64 -> i64` ở đây đều phải **kiểm miền**, không được
+    // dùng `as i64` (Rust bão hoà im lặng ở `200pct * i64::MAX`). Tính trung gian bằng `f64` rồi
+    // kiểm **kết quả cuối** — không thay máy móc bằng `checked_mul` trên int (VD-243 §2).
     if let (Value::Percent(p), rhs) = (&l, &r) {
         match (op, rhs) {
-            (Mul, Value::Int(n)) => return Ok(Value::Int((p * (*n as f64)) as i64)),
-            (Mul, Value::Size(n)) => return Ok(Value::Size((p * (*n as f64)) as i64)),
-            (Mul, Value::Duration(n)) => return Ok(Value::Duration((p * (*n as f64)) as i64)),
+            (Mul, Value::Int(n)) => return Ok(Value::Int(pct_nhan_f64(*p, *n as f64, span)?)),
+            (Mul, Value::Size(n)) => return Ok(Value::Size(pct_nhan_f64(*p, *n as f64, span)?)),
+            (Mul, Value::Duration(n)) => {
+                return Ok(Value::Duration(pct_nhan_f64(*p, *n as f64, span)?))
+            }
             (Add | Sub, Value::Percent(q)) => {
-                return Ok(Value::Percent(if matches!(op, Add) {
-                    p + q
-                } else {
-                    p - q
-                }))
+                let r = if matches!(op, Add) { p + q } else { p - q };
+                return Ok(Value::Percent(pct_moi(r, span)?));
             }
             (Div, Value::Int(n)) => {
                 if *n == 0 {
                     return Err(trap(DIV0, "chia cho 0", span));
                 }
-                return Ok(Value::Percent(p / (*n as f64)));
+                return Ok(Value::Percent(pct_moi(p / (*n as f64), span)?));
             }
             _ => {}
         }
     }
     if let (Value::Int(n), Value::Percent(p)) = (&l, &r) {
         if matches!(op, Mul) {
-            return Ok(Value::Int(((*n as f64) * p) as i64));
+            return Ok(Value::Int(pct_nhan_f64(*p, *n as f64, span)?));
         }
     }
     // ST-13b (mục 5): đối xứng `size/duration * percent` và `percent / percent` (VD-48: **float**).
     if let (Value::Size(n), Value::Percent(p)) = (&l, &r) {
         if matches!(op, Mul) {
-            return Ok(Value::Size(((*n as f64) * p) as i64));
+            return Ok(Value::Size(pct_nhan_f64(*p, *n as f64, span)?));
         }
     }
     if let (Value::Duration(n), Value::Percent(p)) = (&l, &r) {
         if matches!(op, Mul) {
-            return Ok(Value::Duration(((*n as f64) * p) as i64));
+            return Ok(Value::Duration(pct_nhan_f64(*p, *n as f64, span)?));
         }
     }
     if let (Value::Percent(a), Value::Percent(b)) = (&l, &r) {
@@ -504,7 +468,7 @@ fn arith(op: BinOp, l: Value, r: Value, span: Span) -> crate::interp::R<Value> {
                 if *b == 0.0 {
                     return Err(trap(DIV0, "lấy dư cho 0", span));
                 }
-                return Ok(Value::Percent(a % b));
+                return Ok(Value::Percent(pct_moi(a % b, span)?));
             }
             _ => {}
         }
@@ -640,9 +604,9 @@ fn arith(op: BinOp, l: Value, r: Value, span: Span) -> crate::interp::R<Value> {
             }
             Ok(Value::Duration(a % b))
         }
-        // percent
-        (Add, Value::Percent(a), Value::Percent(b)) => Ok(Value::Percent(a + b)),
-        (Sub, Value::Percent(a), Value::Percent(b)) => Ok(Value::Percent(a - b)),
+        // percent (phòng thủ — các ca trên đã xử lý sớm; giữ cùng kiểm miền VD-243)
+        (Add, Value::Percent(a), Value::Percent(b)) => Ok(Value::Percent(pct_moi(a + b, span)?)),
+        (Sub, Value::Percent(a), Value::Percent(b)) => Ok(Value::Percent(pct_moi(a - b, span)?)),
         // còn lại: chưa hỗ trợ ở VS0
         (op, l, r) => Err(trap(
             RT,
@@ -807,6 +771,10 @@ pub fn call(
                     span,
                 )),
             };
+        }
+        // **VD-241 §3** — nội bộ: nâng giá trị tới đủ `depth` lớp `Opt` (đối số 2).
+        if kieu == "lift-opt" {
+            return Ok(crate::lift::lift_opt_args(args));
         }
         if kieu == "await" {
             return match args.into_iter().next() {
@@ -1016,17 +984,27 @@ pub fn call(
             Ok(Value::List(
                 ds.into_iter()
                     .map(|m| {
+                        // **ST-240 / VD-242 §4 (nợ #171)**: host ép `SystemTime` (u128 ns) sang
+                        // `i64`; mtime > 2262 tràn thành số âm ⇒ `thoi_gian_utc` in năm 1861.
+                        // Thời gian trước epoch là bất biến sai ở đây ⇒ thay bằng `–` (được VD-242
+                        // cho phép) và kẹp `modified` về biên, không in số âm vô nghĩa.
+                        let ns = m.modified_ns.max(0);
+                        let hien_thoi = m.modified_ns >= 0;
                         let mut truong = vec![
                             ("name".to_string(), Value::Str(m.name)),
                             ("size".to_string(), Value::Size(m.size as i64)),
-                            ("modified".to_string(), Value::Duration(m.modified_ns)),
+                            ("modified".to_string(), Value::Duration(ns)),
                             ("is_file".to_string(), Value::Bool(m.is_file)),
                         ];
                         let ten = if long {
                             truong.push(("mode".to_string(), Value::Str(chuoi_quyen(m.mode))));
                             truong.push((
                                 "modified_time".to_string(),
-                                Value::Str(thoi_gian_utc(m.modified_ns)),
+                                Value::Str(if hien_thoi {
+                                    thoi_gian_utc(ns)
+                                } else {
+                                    "–".to_string()
+                                }),
                             ));
                             "FileEntryLong"
                         } else {
@@ -1489,8 +1467,34 @@ fn map_method(
         )),
     }
 }
-/// Tràn `i64` — `VS0507` (tách khỏi `VS0501`, VD-43 #2/R9).
+/// **ST-240 / VD-243 #172**: nhân `f64` rồi kiểm **kết quả cuối**, không `checked_mul` máy móc;
+/// `100pct * i64::MAX = 2^63` vẫn là biên hợp lệ. Mọi tạo `Percent` mới cũng kiểm miền.
+fn pct_nhan_f64(p: f64, n: f64, span: Span) -> crate::interp::R<i64> {
+    let v = p * n;
+    if !v.is_finite() || v > crate::value::PCT_GIOI_I64 || v < -crate::value::PCT_GIOI_I64 {
+        return Err(trap(
+            OVERFLOW,
+            "tràn miền biểu diễn khi nhân percent với số (VD-243 #172)".to_string(),
+            span,
+        ));
+    }
+    Ok(v as i64)
+}
+
+/// **ST-240 / VD-243 #172**: chặn tại nơi tạo giá trị — không chỉ sửa chuỗi `show`.
+fn pct_moi(ratio: f64, span: Span) -> crate::interp::R<f64> {
+    if !crate::value::pct_hop_le(ratio) {
+        return Err(trap(
+            OVERFLOW,
+            "kết quả percent vượt miền biểu diễn (VD-243 #172)",
+            span,
+        ));
+    }
+    Ok(ratio)
+}
+
+/// Tràn `i64` — `VS0507` (VD-43 #2/R9).
 fn overflow(span: Span) -> Abort {
-    // **R9 (VD-178)**: tràn `i64` ⇒ `VS0507` (tách khỏi `VS0501`).
+    // **R9 (VD-178)**: tràn i64 ⇒ `VS0507` (tách khỏi `VS0501`).
     trap(OVERFLOW, "tràn i64 lúc chạy (VD-43 #2)", span)
 }

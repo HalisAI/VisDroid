@@ -108,15 +108,44 @@ fn ds_test(text: &str) -> Vec<(String, Span, Span)> {
 
 /// Đổi `test fn <tên>` thành `fn main` (chỉ tên đang chọn); giữ nguyên phần còn lại.
 fn thanh_main(text: &str, test_span: Span, name_span: Span) -> String {
-    let mut s = String::with_capacity(text.len());
-    s.push_str(&text[..test_span.start]);
+    // **VD-241 § fix(Windows/CRLF #psvn-A1)**: span trỏ vào văn bản chuẩn hoá CRLF→LF, slice theo đó.
+    let norm = vis_syntax::lex::normalize_source(text);
+    let mut s = String::with_capacity(norm.len());
+    s.push_str(&norm[..test_span.start]);
     s.push_str("fn main");
-    s.push_str(&text[name_span.end..]);
+    s.push_str(&norm[name_span.end..]);
     s
+}
+
+/// **ST-230 (nối VD-winport)**: PATH cho tiến trình con của `vis test`, có **thư mục của binary
+/// `vis`** ở đầu. Fixture `.vish` gọi trợ giúp `test-child` đặt **cạnh** `vis` (cùng cách hai
+/// harness Rust `tests/sem.rs` + `tests/diag_cmp.rs` làm bằng `CARGO_BIN_EXE_test-child`); không có
+/// mục này thì `./target/debug/vis test test/sem` báo `VS0501 không chạy được chương trình ngoài
+/// test-child` cho 4 fixture `vish/ngoai-*` dù `cargo test` xanh. Chỉ đổi PATH của **tiến trình
+/// con**; PATH của chính `vis` giữ nguyên.
+fn path_voi_muc_dau(dir: &Path) -> Option<std::ffi::OsString> {
+    if dir.as_os_str().is_empty() {
+        return None;
+    }
+    let cu = std::env::var_os("PATH").unwrap_or_default();
+    let mut muc: Vec<PathBuf> = vec![dir.to_path_buf()];
+    muc.extend(std::env::split_paths(&cu));
+    std::env::join_paths(muc).ok()
+}
+
+/// Đặt PATH cho `c`: `dir(binary vis)` + PATH hiện tại; không làm gì nếu không xác định được.
+fn dat_path_tro_giup(c: &mut Command) {
+    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("vis"));
+    if let Some(dir) = exe.parent() {
+        if let Some(p) = path_voi_muc_dau(dir) {
+            c.env("PATH", p);
+        }
+    }
 }
 
 fn chay(ca: &Path, vm: bool, strict: bool) -> (i32, String, String) {
     let mut c = Command::new(std::env::current_exe().unwrap_or_else(|_| PathBuf::from("vis")));
+    dat_path_tro_giup(&mut c);
     c.arg("run").arg("--tap");
     if strict {
         c.arg("--strict-caps");
@@ -342,6 +371,7 @@ pub fn run(args: &[String]) -> ExitCode {
             }
             let mut c =
                 Command::new(std::env::current_exe().unwrap_or_else(|_| PathBuf::from("vis")));
+            dat_path_tro_giup(&mut c);
             c.arg("run");
             if strict {
                 c.arg("--strict-caps");
@@ -560,6 +590,23 @@ mod tests {
         assert!(
             dt.as_millis() < 3_000,
             "{dt:?} ≥ 3 s ⇒ đang chờ cháu đóng ống"
+        );
+    }
+
+    /// **ST-230**: PATH cho tiến trình con có thư mục binary ở **đầu**, phần PATH cũ giữ nguyên
+    /// thứ tự phía sau; thư mục rỗng ⇒ không đổi PATH (nhánh `current_exe()` fallback `"vis"`).
+    #[test]
+    fn path_voi_muc_dau_them_dau_va_giu_phan_con_lai() {
+        let p = super::path_voi_muc_dau(Path::new("/tmp/muc-vis"))
+            .expect("PATH phải join được (không chứa ký tự cấm)");
+        let ds: Vec<PathBuf> = std::env::split_paths(&p).collect();
+        assert_eq!(ds.first(), Some(&PathBuf::from("/tmp/muc-vis")));
+        let cu: Vec<PathBuf> =
+            std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).collect();
+        assert_eq!(&ds[1..], &cu[..], "PATH cũ phải giữ nguyên thứ tự");
+        assert!(
+            super::path_voi_muc_dau(Path::new("")).is_none(),
+            "thư mục rỗng ⇒ không đổi PATH"
         );
     }
 }

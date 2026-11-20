@@ -47,8 +47,13 @@ fn magic_sai_bi_tu_choi() {
 #[test]
 fn version_sai_bi_tu_choi() {
     let mut b = encode(&module_mau());
-    b[4..6].copy_from_slice(&2u16.to_le_bytes());
-    assert_eq!(decode(&b), Err(DecodeError::BadVersion(2)));
+    // **VD-257 (stream B)**: `3` KHÔNG CÒN là sentinel — nó là `INSTRUMENTED_VERSION` (module có
+    // trailer VFEE). `decode` mặc định (chỉ nhận `VERSION = 2`) vẫn phải từ chối cả 3 lẫn số lạ 99.
+    // Dùng 99 làm sentinel "không hỗ trợ"; 1 (bản cũ) / 3 (instrumented) được phủ ở file riêng.
+    assert_eq!(VERSION, 2, "cập nhật lại sentinel nếu VERSION đổi tiếp");
+    assert_eq!(vis_bytecode::INSTRUMENTED_VERSION, 3);
+    b[4..6].copy_from_slice(&99u16.to_le_bytes());
+    assert_eq!(decode(&b), Err(DecodeError::BadVersion(99)));
 }
 
 #[test]

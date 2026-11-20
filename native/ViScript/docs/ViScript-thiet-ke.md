@@ -25,6 +25,13 @@ Bản này đã vá theo [`docs/QUYET-DINH-sau-review.md`](../QUYET-DINH-sau-rev
 
 Ba quyết định lớn ảnh hưởng thi công: (a) QD §1 **Q-D** — parse chế độ lệnh hai pha; `VT06` cũ chỉ làm `CmdCST` + golden, `cmd_lower` là task vòng 2; (b) QD §7.4 — **ST-02a chặn ST-04..ST-09**; (c) QD §7.3 — **`|` không bao giờ là toán tử nhị phân trong biểu thức**, pattern vẫn dùng `|`.
 
+## Cập nhật 2026-11-19 (đợt coercion Option — A0)
+
+- **`T? = Option[T]`; `T?? = Option[Option[T]]`** — optional **lồng thật**, không làm phẳng, không “bỏ lớp trong”; `T???` cũng hợp lệ. Sugar (`int??`) ≡ spelled-out (`Option[Option[int]]`) ≡ alias (`type Y = …`), **cùng coercion, cùng runtime**.
+- **Bảng giá trị** (4.4): `None ⇒ None` lớp ngoài · `Some(None)` ⇒ `Some(None)` · `Some(Some(42))` ⇒ `Some(Some(42))` · `Some(42)` ⇒ **nâng một lớp** ⇒ `Some(Some(42))` · `42` ⇒ **lỗi `VS0412`** (không nâng hai lớp).
+- **Thứ tự kiểm tra chuyển đổi** (bước 1–4, mục 4.4) áp ở **mọi biên**: `let` · gán lại `var` · đối số · thân hàm · `return`. `None` trần **không** bị bọc `Some(None)` ở biên nào nữa.
+- Đây là ngữ nghĩa chốt của đợt A0 2026-11-19 (sau đính chính VD-241 §7); implementation đồng bộ trong nhánh `rev/vd241-option-coercion-2026-11-19`. Các ghi chú lịch sử "T?? là lỗi kiểu" bên dưới (VD-19) đã được đánh dấu supersede.
+
 
 ---
 
@@ -115,7 +122,7 @@ Phụ lục B. Chương trình mẫu
 - Phần mở rộng `.vis` (script), `.vish` (tệp ở chế độ lệnh, xem 9.1). UTF-8 bắt buộc. Dòng đầu tuỳ chọn `#!/usr/bin/env vis`.
 - **Chuẩn hoá NFC trước khi lex** (QD §7.1): **toàn bộ** tệp nguồn được chuẩn hoá Unicode NFC **trước** khi lex. Hệ quả: định danh, literal `str`/`char` và **cột chẩn đoán** đều tính trên dạng NFC; `'ố'` gõ dạng tổ hợp hay dựng sẵn đều là **một** Unicode scalar và là một literal `char` hợp lệ; `số_lượng` viết dạng tổ hợp (NFD) và dạng dựng sẵn (NFC) là **cùng một** tên. `vis fmt` ghi ra NFC. Vị trí báo lỗi vẫn trỏ được về tệp gốc vì cả lexer và editor cùng chuẩn hoá một cách tất định.
 - **Từ khoá tiếng Anh** (giống Python, Rust, JS/TS). Danh sách:
-  `let var const fn cmd type enum trait impl alias newtype pub use if elif else match for in while loop break continue return and or not true false self async await scope test extern derives with has dyn ref`
+  `let var const fn cmd type enum trait impl pub use if elif else match for in while loop break continue return and or not true false self async await scope test extern derives with has dyn ref`
   - **Thêm `const`** (dùng cho `const_decl`, Phụ lục A).
   - **Bỏ `as`**: bản này không có cú pháp alias trong `use`; `as` là định danh bình thường.
   - **`test` là từ khoá theo ngữ cảnh**: chỉ là từ khoá khi đứng đầu item và ngay sau là `fn` (`test fn name():`). Ở vị trí khác `test` là định danh, nên `test.run()` hợp lệ.
@@ -217,7 +224,7 @@ Phụ lục B. Chương trình mẫu
 
 - `Future[T]` là giá trị lười do gọi `async fn` sinh ra; `Task[T]` là future **đã được spawn** trong `scope`, có handle để `await`/huỷ (10.1).
 - `AnyError` là **kiểu lỗi xoá kiểu** dùng ở ranh giới (6.1).
-- `T??` là **lỗi kiểu** — optional không lồng (4.4).
+- `T??` là **`Option[Option[T]]` lồng thật** — optional **có** lồng (VD-241, đợt coercion Option 2026-11-19); xem (4.4).
 - `percent` so sánh được với `float` **theo tỉ lệ** (`50pct == 0.5`, 3.6); `ps.cpu` có kiểu `percent`.
 - `bigint`, `decimal` là thư viện, không nằm trong lõi.
 
@@ -238,7 +245,7 @@ type UserId = int
 type Email(str)                 # kiểu mới, không tự chuyển đổi với str
 ```
 
-- `derives` sinh cài đặt trait chuẩn: `Eq`, `Ord`, `Hash`, `Show`, `Json`, `Default`. Kiểu chứa `float` **không** derive được `Eq`/`Hash` (3.6).
+- `derives` sinh cài đặt trait chuẩn: `Eq`, `Show`, `Json` (chỉ 3 trait có sẵn trong implementation; `Ord`/`Hash`/`Default` chưa có). Kiểu chứa `float` **không** derive được `Eq`/`Hash` (3.6).
 - Tạo bản ghi: `User(name: "An", age: 20)`; tham số có tên bắt buộc khi bản ghi có hơn 2 trường.
 - Cập nhật: `u with age: 21` trả bản ghi mới. Trường **bất biến** ở bản này (không có `var` cho trường).
 - `type X = T` là tên khác của cùng kiểu; `type Email(str)` là kiểu mới, phải chuyển đổi tường minh
@@ -282,7 +289,7 @@ Bảng bắt buộc (QD §7.3, chấp nhận bảng D điểm 3):
 | `int % int` | `int` | dấu theo **số bị chia** (C/Rust: `-7 % 2 == -1`); `%0` **panic**; có `rem_euclid`, `mod_floor` |
 | `int ** int` | `int` | **kết hợp phải**, **cao hơn** `*`; mũ âm **panic**; tràn **panic**; có `checked_pow -> int?` |
 | `float` cơ bản | `float` | f64; `/0.0` theo IEEE 754 (±inf/NaN), **không panic** |
-| NaN | — | `==` trả `false` (kể cả `nan == nan`); float **không** có `Eq`/`Ord`/`Hash`; kiểu chứa `float` không `derives Eq`/`Hash`; sắp xếp dùng `total_cmp` |
+| NaN | — | `==` trả `false` (kể cả `nan == nan`); float **không** có `Eq`; kiểu chứa `float` không `derives Eq`; sắp xếp dùng `total_cmp` |
 | Bit | `int` | `bit_and bit_or bit_xor bit_not shl shr ushr` trên 64 bit có dấu (`bit_not(0) == -1`); `shr` **số học** (giữ dấu), `ushr` **logic**; số đếm ngoài `0..63` **panic**; có `checked_shl`, `checked_shr` |
 | `size ± size` | `size` | tràn panic; `size * int`, `size / int`; `size / size -> float` |
 | `duration ± duration` | `duration` | `duration * int`, `duration / int`, `duration / duration -> float` |
@@ -360,7 +367,23 @@ if let mail = user.email:
 ```
 
 - **Tự nâng `T → T?`** ở ba vị trí: **gán** (`let x: int? = 5`), **trả về** (`-> int?` với `5`), **đối số** (`f(x)` với tham số `int?`). Chiều ngược lại **không** có: `T?` không tự thành `T`.
-- `T??` là **lỗi kiểu** (optional không lồng).
+- **`T?` ≡ `Option[T]`**; **`T??` ≡ `Option[Option[T]]`** — optional **có** lồng, **không làm phẳng**, không "bỏ lớp trong", không "gộp lớp". Mọi số lớp: `T???` ≡ `Option[Option[Option[T]]]`. `Some(x)` luôn thêm **đúng một** lớp.
+- **Bảng giá trị** (đợt coercion Option, A0 2026-11-19): với đích `T??`, giá trị lúc chạy giữ **đúng số lớp**:
+
+  | Nguồn | Đích `int??` | Kết quả |
+  |---|---|---|
+  | `None` | ✓ hợp lệ | `None` lớp **ngoài** (bước 1 — trực tiếp hợp lệ) |
+  | `Some(None)` | ✓ hợp lệ | `Some(None)` (giữ) |
+  | `Some(Some(42))` | ✓ hợp lệ | `Some(Some(42))` (giữ) |
+  | `Some(42)` | ✓ hợp lệ | **nâng một lớp** ⇒ `Some(Some(42))` |
+  | `42` | ✘ lỗi `VS0412` | cần nâng **hai** lớp — không lặp |
+
+  **Thứ tự kiểm tra chuyển đổi** (áp dụng ở mọi biên — `let` · gán lại `var` · đối số · thân hàm · `return`):
+  1. biểu thức hợp lệ **trực tiếp** theo kiểu đích ⇒ **giữ nguyên** cấu trúc giá trị (không nâng);
+  2. chỉ xét nâng **một lớp** khi bước 1 không áp dụng và kiểu nguồn phù hợp với kiểu phần tử;
+  3. **không** nâng lặp nhiều lớp một lần; **không** nâng ngầm trong pattern;
+  4. `None` có thể định kiểu trực tiếp là `Option` ngoài ⇒ giữ là `None` lớp ngoài, **không** được định kiểu thành `Option` trong rồi bọc thêm lớp.
+- **Sugar ≡ spelled-out ≡ alias** — `int??` ≡ `Option[Option[int]]` ≡ `type Y = Option[Option[int]]`: cùng coercion, cùng runtime (kiểu spelled-out/alias phân giải về `Option` ngay ở hạ tầng `lower`, như `list`/`map`/`Result`).
 - `?` dùng được trên `T?` khi hàm đang viết trả `U?`; trên `Result[T, E]` khi trả `Result[U, F]` với `E: Error` (6.1).
 - `?.` trên `T?` trả `T?`; `??` nhận toán hạng phải **cùng kiểu đã bỏ optional**.
 - `.get(i)`, `.first()`, `.last()`, `xs[i]?` trả `T?`; `xs[i]` panic (4.5, Q5).
@@ -495,8 +518,17 @@ fn read_config(dir: cap[Dir]) -> Result[Config, AnyError]:
 - `trait Error: Show { message, source, span }` (QD §7.3): mọi kiểu lỗi in được (`Show`) và cung cấp `message: str`, `source: Error?` (nguyên nhân lồng), `span: Span?` (vị trí nguồn).
 - `AnyError` là **kiểu xoá kiểu** (boxed `dyn` là chi tiết cài đặt): bọc mọi `E: Error`, dùng ở ranh giới (main, plugin, task).
 - **Mọi `E: Error` tự chuyển sang `AnyError` qua `?`** — không cần `impl Into`. `?` trên `Result[T, E]` trong hàm trả `Result[U, AnyError]` hợp lệ khi `E: Error`.
-- `?` trên `T?` chỉ trong hàm trả `U?` (4.4). `?` **không** tự bọc `Result` vào `Result` lồng; `T??` là lỗi kiểu.
+- `?` trên `T?` chỉ trong hàm trả `U?` (4.4). `?` **không** tự bọc `Result` vào `Result` lồng; `T??` là `Option[Option[T]]` lồng hợp lệ (bảng giá trị — 4.4).
 - `main -> Result[(), AnyError]`. Phía plugin Rust, tên của cùng trait là **`vis::Error`** (17).
+
+> **Hiện thực VS2 (VD-222, 18/11/2026 — quyết định proxy của Agent 1, A0 duyệt lại khi tiếp nhận)**:
+> `trait Error: Show` mang **3 phương thức mặc định-less** (`message(self) -> str`, `source(self) -> Error?`, `span(self) -> str?`); mọi lỗi std là
+> **bản ghi dựng sẵn `Error { message: str, source: Error?, span: str? }`** (đệ quy qua `Error?`; `span`
+> là chuỗi `path:line:col`). `AnyError` là **alias bản ghi `Error`** (RecId(0)) — **VD-231** (A0 2026-11-19, thay nội dung proxy `VD-222 §5`; không có `dyn`; `?` không kiểm
+> biến thể lỗi). `std.json.decode` → **`Result[Json, Error]`** với **enum dựng sẵn `Json`**
+> (`Null/Bool/Num/Str/Arr/Obj`; `Num` giữ cả `int` lẫn `float` ở payload `{error}`). Giá trị `Json`
+> dùng `match` được; bản ghi `Error` in `print` chỉ `{message}`. `main -> Result[_, AnyError]` compile
+> sạch; `Err` ở `main` ⇒ exit 1 (đã có, VD-178).
 
 ### 6.2 `else` xử lý tại chỗ
 
@@ -584,7 +616,7 @@ Giá trị có ngữ nghĩa giá trị là `Send`. Khi gửi, nếu chỉ có m�
 - `pub` để xuất; mặc định riêng tư.
 - **Không có `as`** (đã bỏ khỏi từ khoá, 2.1): muốn tên ngắn thì `use` đúng mục cụ thể.
 - Cấm vòng phụ thuộc giữa module.
-- Gói: thư mục có `vis.toml` (tên, phiên bản, giấy phép, phụ thuộc theo đường dẫn, git URL + commit, hoặc registry sau này), `vis.lock` khoá phiên bản + hash nội dung.
+- Gói: **mô hình phi tập trung kiểu Go** — tên gói = **đường dẫn**, phiên bản = **tag git semver**, chọn bằng **MVS**, `vis.lock` = **sha256 của cây tệp chuẩn hoá**, sổ hash `sum.vifast.org`; **`[thiết kế VS3-6, chưa triển khai]`** — chi tiết ở **Phụ lục C**, trạng thái mã đang chạy ở **C.2**.
 - Script một tệp khai phụ thuộc ở đầu tệp:
 
 ```vis
@@ -1028,7 +1060,7 @@ mod image {
 | Chế độ lệnh | `bảng dòng lệnh → CmdCST` vàng cho **từng hàng bảng 9.4** + 10 ca mơ hồ (ST-06); "cùng HIR" chỉ kiểm sau khi có `cmd_lower` (vòng 2) |
 | Kiểm kiểu | tệp `.vis` có chú thích kỳ vọng `# error: VS0412` hoặc `# ok`; mỗi mã lỗi có ca dương và ca âm; snapshot thông báo lỗi |
 | Xét hết match | so với bộ liệt kê vét cạn trên enum nhỏ sinh ngẫu nhiên; **guard không tính**, **kiểu vô hạn cần `_`** |
-| Optional | `T → T?` tự nâng; `T??` lỗi; `?` trên `T?`; `if let`; `.get/.last` khi rỗng; `xs[i]?` |
+| Optional | `T → T?` tự nâng; `T??` = `Option[Option[T]]` lồng hợp lệ (không làm phẳng; bảng giá trị — 4.4); `?` trên `T?`; `if let`; `.get/.last` khi rỗng; `xs[i]?` |
 | Số | `%` dấu theo số bị chia; `%0` panic; `**` phải-kết-hợp; mũ âm panic; bit count ≥ 64 panic; NaN `==` false |
 | Interpreter | mô hình tham chiếu, giữ đơn giản |
 | Bytecode + VM | **vi sai**: bộ sinh chương trình đúng kiểu theo seed, chạy trên interpreter và VM, so đầu ra, mã thoát, lỗi; tự thu nhỏ ca lệch |
@@ -1171,7 +1203,7 @@ Nhãn task đổi **VT → ST** (QD §2.1); cột Trạng thái dùng `READY | B
 | VD-16 | Bảng ưu tiên chốt (cao → thấp): postfix (`. ?. () [] ? with`) → `**` → `-` một ngôi → `* / %` → `+ -` → `.. ..=` → `??` → so sánh (không kết hợp) → `not` → `and` → `or` → `|>`. `**` kết hợp **phải**, cao hơn `*`; mũ âm với int panic; có `checked_pow`. |
 | VD-17 | Float: NaN — `==` trả false; float **không** có `Eq/Ord/Hash`; kiểu chứa float không derive được `Eq/Hash`; dùng `total_cmp`. `percent` so sánh được với float theo tỉ lệ (`50pct == 0.5`); `ps.cpu` có kiểu `percent`. |
 | VD-18 | Chuỗi: **cấm `s[i]`**; dùng `.chars() .graphemes() .bytes() .byte_at(i)?`; có `byte_len()`, `char_count()`, `grapheme_count()`; so sánh theo dãy scalar. Index: thêm `xs[i]?` trả `T?`; `xs[-1]` panic có thông điệp. |
-| VD-19 | Optional: tự nâng `T → T?` ở gán, trả, đối số; `T??` là lỗi kiểu; `?` dùng được trên `T?` trong hàm trả `U?`; pattern `None`, `Some(x)`, `Ok(v)`, `Err(e)` (**R1a**: viết thường ⇒ `VS0111`). |
+| VD-19 | Optional: tự nâng `T → T?` ở gán, trả, đối số; `T??` là lỗi kiểu (**supersede bởi VD-241 / đợt coercion Option A0 2026-11-19** — `T?? = Option[Option[T]]` lồng hợp lệ; xem 4.4); `?` dùng được trên `T?` trong hàm trả `U?`; pattern `None`, `Some(x)`, `Ok(v)`, `Err(e)` (**R1a**: viết thường ⇒ `VS0111`). |
 | VD-20 | Lỗi: `trait Error: Show { message, source, span }`; `AnyError` là kiểu xoá; mọi `E: Error` tự chuyển sang `AnyError` qua `?`; `main -> Result[(), AnyError]`; tên phía plugin Rust là `vis::Error`. Mã thoát: 0 ok, 1 lỗi từ main, 2 lỗi dùng/kiểu, 101 panic, 126 không chạy được, 127 không tìm thấy, 130 bị huỷ. |
 | VD-21 | Chế độ lệnh (QD §7.2): metachar là khoảng trắng, `( ) [ ] { } ; & $ ' " |`, `#` ở đầu từ; `"..."` có nội suy, `'...'` thô; `$x` biến phiên, `$env.NAME` môi trường; `;` tách pipeline; `&` nền chỉ khi là token cuối có khoảng trắng phía trước; `--` kết thúc cờ; `-5` là số nếu tham số kiểu số, ngược lại là cờ; `.vish`/REPL: `shell_item := use | let | fn | cmd | pipeline`. |
 | VD-22 | Parse chế độ lệnh **hai pha**: `vis-syntax` sinh `CmdCST` (từ trần chưa định kiểu) → `cmd_lower` trong `vis-types` dùng bảng chữ ký → **HIR**. Tiêu chí "cùng AST" đọc thành **"cùng HIR"**; vòng 1 chỉ làm `CmdCST` + golden, `cmd_lower` là task vòng 2. |
@@ -1346,7 +1378,7 @@ record_pat      := IDENT ':' pattern | IDENT | '..'
 
 (* ===== A.5 Kiểu ===== *)
 
-type            := type_primary ['?']                 (* T?? là lỗi kiểu, 4.4 *)
+type            := type_primary ('?' | '??')*         (* Option lồng — `T?? = Option[Option[T]]`, không làm phẳng (VD-241, 4.4) *)
 type_primary    := dotted_path ['[' types ']']
                  | 'ref' '[' type ']'
                  | 'weak' '[' type ']'
@@ -1487,6 +1519,93 @@ fn tính_tổng(danh_sách: list[int]) -> int:
     tổng
 ```
 
+## Phụ lục C. Gói — mô hình **phi tập trung kiểu Go** `[thiết kế VS3-6, chưa triển khai]`
+
+> **Nhãn `[thiết kế VS3-6, chưa triển khai]` áp cho TOÀN BỘ phụ lục này.** Đây là **đích thiết kế**
+> (VD-180/VD-181; bản đầy đủ ở `agent/JOURNAL/vs3-qd-6.md`), **không** phải hành vi của mã đang chạy.
+> **Trạng thái hiện tại** của lệnh `vis pkg` ở **C.2** — đọc C.2 trước khi trích dẫn C.1. Mục 8 chỉ còn
+> **một dòng trỏ** về đây.
+
+### C.1 Thiết kế VS3-6
+
+**Không có kho tập trung ở 1.0.** Mô hình giống Go: **tên gói là đường dẫn**, **phiên bản là tag git**.
+
+| Thành phần | Thiết kế VS3-6 |
+|---|---|
+| Tên gói | **đường dẫn**: `vifast.org/vis/<tên>`, `github.com/<chủ>/<repo>`, hoặc domain riêng |
+| Tên chính thức | `vifast.org/vis/<tên>` — **path trên một host**, **không** subdomain; `<tên>` chữ thường `[a-z0-9-]`, **không** `_`/viết hoa; **không** alias `/x/` |
+| Phiên bản | **tag git semver** (`v1.2.3`); **major ≥ 2 phải có `/v2` trong đường dẫn** |
+| Chọn phiên bản | **Minimal Version Selection (MVS)** — **không** bộ giải ràng buộc, **không** "chọn bản mới nhất" |
+| `vis.toml` | `<tên ngắn> = "<đường dẫn>@<semver>"`; code chỉ `use <tên ngắn>`; **không** có trường "registry" |
+| `vis.lock` | **sha256 của cây tệp chuẩn hoá** cho mỗi `gói@phiên bản` |
+| Tin cậy | `sum.vifast.org` = sổ hash công khai **chỉ ghi thêm**; **không** có khoá ký registry |
+| Proxy | `proxy.vifast.org` — **chỉ thiết kế, chưa vận hành**; `VIS_PROXY=direct` mặc định |
+
+- **`vis.toml`**:
+
+  ```toml
+  [dependencies]
+  json = "vifast.org/vis/json@v1.2.3"
+  http = "github.com/vifast-oss/vis-http@v0.9.0"
+  ```
+
+  Code chỉ dùng **tên ngắn** (`use json`); major ≥ 2 nằm ở **đường dẫn**:
+  `vifast.org/vis/json/v2@v2.0.1`.
+- **`vifast.org/vis/<tên>`** = **trang tĩnh** trỏ nơi chứa mã (**meta tag**) để đổi nơi chứa mà **không**
+  đổi tên gói. Hợp đồng công khai là **nội dung meta tag**, **không** phải reverse proxy (Traefik chỉ là
+  lớp phục vụ, được phép thay). Tài liệu ở `vifast.org/docs/vis/…` để không đụng không gian tên gói.
+- **MVS**: mỗi phụ thuộc khai **phiên bản tối thiểu**; `vis` chọn **phiên bản lớn nhất trong các mức tối
+  thiểu** đó. Hai phụ thuộc cùng cần `X` `v1.2` và `v1.4` ⇒ chọn **`v1.4`**, **không** chọn `v1.9` dù có.
+  Major khác nhau = **đường dẫn khác** (`/v2`) ⇒ cùng tồn tại được.
+- **`pkg update X`** chỉ đổi **X và phụ thuộc bắt buộc của X**; `pkg update` không đối số cập nhật tất cả
+  (nợ **#142**).
+- **Tin cậy — thay khoá ký registry**: `vis.lock` ghi **sha256 của cây tệp chuẩn hoá** (đường dẫn tương
+  đối sắp theo byte + nội dung + bit thực thi 0/1; **không** mtime, **không** quyền đầy đủ, **không**
+  `.git`/`target`). **`sum.vifast.org`** = sổ hash công khai **chỉ ghi thêm** (giai đoạn đầu là repo git
+  có commit ký; `vis` **ghim khoá công khai** của sổ). **Lần đầu** tải ⇒ hash phải khớp **sổ** (nếu sổ
+  bật); **lần sau** ⇒ khớp **`vis.lock`**. Lệch ⇒ **VS0707** ("hash gói không khớp `vis.lock` hoặc sổ"),
+  **không** ghi `.vis/pkg/`. **Không có lệnh bỏ qua**; chỉ có **`VIS_SUMDB=off`** (tắt hỏi sổ, **ghi cảnh
+  báo** mỗi lần build). Gói riêng tư: **`VIS_PRIVATE=<mẫu đường dẫn>`** ⇒ **không** hỏi sổ, **không** qua
+  proxy, vẫn ghi `vis.lock` và vẫn kiểm hash.
+- **`proxy.vifast.org` — chỉ thiết kế, chưa vận hành ở VS3**: `GET /<đường_dẫn>@<phiên_bản>` ⇒
+  `application/x-vis-pkg` (tar.gz **cây chuẩn hoá**) + header `X-Vis-Hash`; `GET /<đường_dẫn>/@v/list` ⇒
+  danh sách phiên bản. Proxy **không** phải nguồn tin cậy duy nhất (hash luôn kiểm theo sổ/lock).
+  **`VIS_PROXY=direct` là mặc định**; `VIS_PROXY=proxy` là tuỳ chọn.
+- **Bảng host → vai trò**:
+
+  | Host | Vai trò |
+  |---|---|
+  | `vifast.org` | site + **namespace module** (`/vis/*`); tài liệu ở `/docs/vis/*` |
+  | `sum.vifast.org` | sổ hash công khai (chỉ ghi thêm) |
+  | `proxy.vifast.org` | proxy tải gói (**chưa vận hành**) |
+  | `os.` · `tts.` · `key.vifast.org` | **dịch vụ độc lập**, giữ subdomain; **không** phải nơi chứa gói |
+
+  `sum.`/`proxy.vifast.org` đặt **ngang hàng**, **không** lồng dưới `vis.` (phục vụ **mọi** sản phẩm).
+  `vis.vifast.org` **không** làm tiền tố module. `viscript.org` (nếu mua) chỉ là **tài sản thương hiệu**,
+  **không** đưa vào đường dẫn gói ở 1.0.
+- **Bất biến**: sau gói đầu tiên, tên/đường dẫn **không đổi** (đổi = phá mọi `use`). **Quyết định không
+  đảo.**
+- **Ca đỏ-trước bắt buộc** (VS3-6): (a) tag bị đổi nội dung sau khi ghi lock ⇒ **VS0707**; (b) MVS
+  `v1.2`/`v1.4` ⇒ chọn `v1.4`; (c) gói `vifast.org/vis/…` trỏ GitHub ⇒ tải đúng; (d) mạng tắt + có cache
+  ⇒ build chạy.
+- **Ngoài phạm vi VS3**: proxy chạy thật, `pkg.vifast.org` (tìm kiếm/tài liệu), yank/thu hồi phiên bản.
+
+### C.2 Trạng thái hiện tại của `vis pkg` (mã đang chạy, 2026-11-18)
+
+**Không** phải mô hình C.1. Cái **đang có**:
+
+- Lệnh: `vis pkg add <tên>[@<ràng buộc>] [--entry <path>] [--registry <dir>]`, `vis pkg install`,
+  `vis pkg update [<tên>] [--registry <dir>]`, `vis pkg list [--json]`, `vis pkg remove <tên>`
+  (`crates/vis-cli/src/pkg.rs`).
+- **Registry CỤC BỘ** (thư mục; mặc định `./registry`, đổi bằng `--registry`): **không** mạng, **không**
+  tải theo đường dẫn, **không** meta tag, **không** sổ hash, **không** proxy.
+- `vis.lock` ghi **tất cả** gói đã cài, có **SHA-256** (băm cây tệp chuẩn hoá); `install` chỉ đọc
+  `vis.lock` + kho blob `.vis/store/<sha256>` ⇒ **không** cần registry.
+- Chọn phiên bản: **bộ giải ràng buộc** semver (`^`/`~`/so sánh), **không** phải MVS.
+- **Chưa** có: tải theo đường dẫn, MVS, `sum.vifast.org`, `VIS_SUMDB`, `VIS_PRIVATE`, `VIS_PROXY`, chữ ký.
+- Nợ liên quan: **#142** (`pkg update X` ghim mọi gói khác), **#143** (`NamePolicy::Strict`), **#125**
+  (mạng/chữ ký).
+
 ## Mức hiện thực VS2 (đồng bộ 2026-11-16)
 
 Mục này mô tả ngữ nghĩa đã hiện thực, không chứa số đo. Số đo nằm trong viscript/agent/reports/. Khi mục này khác phần thiết kế phía trên, mục này đúng với code hiện tại; phần phía trên là đích thiết kế.
@@ -1497,6 +1616,6 @@ Mục này mô tả ngữ nghĩa đã hiện thực, không chứa số đo. S�
 - **assert <điều kiện>**: có từ ST-83.
 - **.vish và fn main**: trong tệp .vish, fn main chỉ dùng để khai báo cap; thân có câu lệnh thì báo VS0201 (ST-93b). Thụt lề cấp tệp trong .vish có ngữ nghĩa; vis fmt không chuẩn hoá thụt lề .vish.
 - **HTTP**: HTTP/1.1 loopback, có chunked, redirect GET có giới hạn, HEAD, timeout đọc. Chưa có TLS, HTTP/2, keep-alive.
-- **Gói**: registry cục bộ, lock có SHA-256. Chưa có registry mạng và chữ ký.
+- **Gói**: `vis pkg add|install|update|list|remove` trên **registry cục bộ** (thư mục, `--registry`), `vis.lock` có SHA-256, chọn phiên bản bằng **bộ giải ràng buộc** semver. **Chưa** có tải theo đường dẫn, MVS, sổ hash `sum.vifast.org`, proxy, chữ ký — mô hình đó là **`[thiết kế VS3-6, chưa triển khai]`** (Phụ lục C).
 - **LSP**: chỉ publish chẩn đoán cho tài liệu đang mở (VD-126).
 - **Nền tảng**: chạy thật trên macOS; Linux, Windows, wasm32 ở mức biên dịch kiểm tra (VD-104, VD-121).

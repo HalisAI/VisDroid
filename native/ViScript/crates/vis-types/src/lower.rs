@@ -434,6 +434,7 @@ impl<'a> Lowerer<'a> {
             return;
         }
         self.declare_builtins();
+        self.declare_kieu_dung_san();
         // Lượt 1 — "khai báo trước" (§14.3): tên item + id kiểu, để thân hàm gọi được hàm khai
         // sau nó và `type` tham chiếu được kiểu khai sau.
         for child in self.cst.root.children() {
@@ -592,6 +593,258 @@ impl<'a> Lowerer<'a> {
         }
     }
 
+    /// **VD-222 (điểm 1–4; uỷ quyền A0-proxy)** — dựng sẵn kiểu dựng trước item người dùng:
+    /// trait `Show`/`Error`, enum `Json`, bản ghi `Error`. Id ổn định: `EnumId(0) = Json`,
+    /// `RecId(0) = Error` (bảng được dựng mới ở mỗi đơn vị biên dịch & được chèn trong cùng lượt).
+    /// Người dùng khai trùng tên ⇒ `VS0302` (khai báo trước — VD-204 mở rộng).
+    fn declare_kieu_dung_san(&mut self) {
+        if self.tbl.enums().iter().any(|e| e.name == "Json") {
+            // **Đơn vị đa tệp** (ST-25): bảng kiểu **dùng chung** — tệp đầu đã dựng Json/SqlValue/
+            // Error/RowSet ⇒ id ổn định. Tệp này phải **dựng lại bảng tên** của chính nó (mỗi tệp
+            // một `Lowerer`), nếu không tên dựng sẵn chỉ tra được trong tệp đầu.
+            const BUILTIN_ENUMS: [&str; 2] = ["Json", "SqlValue"];
+            const BUILTIN_RECS: [&str; 2] = ["Error", "RowSet"];
+            for (i, e) in self.tbl.enums().iter().enumerate() {
+                if !BUILTIN_ENUMS.contains(&e.name.as_str()) {
+                    continue;
+                }
+                if self.enum_names.iter().any(|(n, _)| *n == e.name) {
+                    continue;
+                }
+                let id = EnumId(i as u32);
+                self.enum_names.push((e.name.clone(), id));
+                for (j, v) in e.variants.iter().enumerate() {
+                    self.variant_index.push((v.name.clone(), id, j));
+                }
+            }
+            for (i, r) in self.tbl.recs().iter().enumerate() {
+                if let Some(n) = r.name.as_deref() {
+                    if BUILTIN_RECS.contains(&n) && !self.rec_names.iter().any(|(rn, _)| rn == n) {
+                        self.rec_names.push((n.to_string(), RecId(i as u32)));
+                    }
+                }
+            }
+            return;
+        }
+        let span0 = Span::new(0, 0);
+        // --- trait `Show`: `fn show(self) -> str` ---
+        self.traits.push(TraitSig {
+            name: "Show".into(),
+            supertraits: Vec::new(),
+            methods: vec![("show".into(), 1, Type::Str, vec![Type::Error])],
+        });
+        // --- trait `Error`: siêu trait `Show`, 3 phương thức mặc định-less (VD-222 điểm 1; (ii)) ---
+        self.traits.push(TraitSig {
+            name: "Error".into(),
+            supertraits: vec!["Show".into()],
+            methods: vec![
+                ("message".into(), 1, Type::Str, vec![Type::Error]),
+                (
+                    "source".into(),
+                    1,
+                    Type::Opt(Box::new(Type::Record(RecId(0)))),
+                    vec![Type::Error],
+                ),
+                (
+                    "span".into(),
+                    1,
+                    Type::Opt(Box::new(Type::Str)),
+                    vec![Type::Error],
+                ),
+            ],
+        });
+        // --- enum `Json` (VD-222 điểm 4): Null/Bool/Num/Str/Arr/Obj ---
+        let json_id = EnumId(self.tbl.enums().len() as u32);
+        self.tbl.push_enum(EnumDef {
+            name: "Json".into(),
+            variants: vec![
+                VariantDef {
+                    name: "Null".into(),
+                    fields: vec![],
+                    span: span0,
+                },
+                VariantDef {
+                    name: "Bool".into(),
+                    fields: vec![FieldDef {
+                        name: "v".into(),
+                        ty: Type::Bool,
+                        span: span0,
+                        has_default: false,
+                    }],
+                    span: span0,
+                },
+                // **`{error}`** — `Num` giữ cả `int` và `float` (VD-204: "Num payload {error}";
+                // dữ liệu thô ở runtime là `Value::Int`/`Value::Float` bóc bởi `stdlib`).
+                VariantDef {
+                    name: "Num".into(),
+                    fields: vec![FieldDef {
+                        name: "v".into(),
+                        ty: Type::Error,
+                        span: span0,
+                        has_default: false,
+                    }],
+                    span: span0,
+                },
+                VariantDef {
+                    name: "Str".into(),
+                    fields: vec![FieldDef {
+                        name: "v".into(),
+                        ty: Type::Str,
+                        span: span0,
+                        has_default: false,
+                    }],
+                    span: span0,
+                },
+                VariantDef {
+                    name: "Arr".into(),
+                    fields: vec![FieldDef {
+                        name: "v".into(),
+                        ty: Type::List(Box::new(Type::Enum(json_id))),
+                        span: span0,
+                        has_default: false,
+                    }],
+                    span: span0,
+                },
+                VariantDef {
+                    name: "Obj".into(),
+                    fields: vec![FieldDef {
+                        name: "v".into(),
+                        ty: Type::Map(Box::new(Type::Str), Box::new(Type::Enum(json_id))),
+                        span: span0,
+                        has_default: false,
+                    }],
+                    span: span0,
+                },
+            ],
+            span: span0,
+        });
+        self.enum_names.push(("Json".into(), json_id));
+        // ctor trần `Null`/`Num`… (như `Some`/`Ok`)
+        for (i, n) in ["Null", "Bool", "Num", "Str", "Arr", "Obj"]
+            .iter()
+            .enumerate()
+        {
+            self.variant_index.push(((*n).to_string(), json_id, i));
+        }
+        // --- bản ghi `Error` (VD-222 điểm 2–3): `source: Error?` đệ quy; `span: str?` ---
+        let error_id = RecId(self.tbl.recs().len() as u32);
+        self.tbl.push_rec(RecDef {
+            name: Some("Error".into()),
+            fields: vec![
+                FieldDef {
+                    name: "message".into(),
+                    ty: Type::Str,
+                    span: span0,
+                    has_default: false,
+                },
+                FieldDef {
+                    name: "source".into(),
+                    ty: Type::Opt(Box::new(Type::Record(error_id))),
+                    span: span0,
+                    has_default: false,
+                },
+                FieldDef {
+                    name: "span".into(),
+                    ty: Type::Opt(Box::new(Type::Str)),
+                    span: span0,
+                    has_default: false,
+                },
+            ],
+            span: span0,
+            anonymous: false,
+        });
+        self.rec_names.push(("Error".into(), error_id));
+        // **VD-241 (Gate 1, 2026-11-19)** — `std.sqlite` MVP: enum `SqlValue` (`EnumId(1)`) và
+        // bản ghi `RowSet` (`RecId(1)`). **Không** vào prelude toàn cục theo nghĩa API: tên chỉ
+        // **hiện ra** khi tệp `use std.sqlite` (hạ gate ở `named_type`/`ctor`; pattern **không**
+        // gate — xem §2 hợp đồng VD-241, pattern là theo scrutinee). `Value::Enum`/`Value::Record`
+        // sẵn có — **không** thêm variant ABI, không thêm opcode.
+        let sqlvalue_id = EnumId(self.tbl.enums().len() as u32);
+        self.tbl.push_enum(EnumDef {
+            name: "SqlValue".into(),
+            variants: vec![
+                VariantDef {
+                    name: "Null".into(),
+                    fields: vec![],
+                    span: span0,
+                },
+                VariantDef {
+                    name: "Integer".into(),
+                    fields: vec![FieldDef {
+                        name: "v".into(),
+                        ty: Type::Int,
+                        span: span0,
+                        has_default: false,
+                    }],
+                    span: span0,
+                },
+                VariantDef {
+                    name: "Real".into(),
+                    fields: vec![FieldDef {
+                        name: "v".into(),
+                        ty: Type::Float,
+                        span: span0,
+                        has_default: false,
+                    }],
+                    span: span0,
+                },
+                VariantDef {
+                    name: "Text".into(),
+                    fields: vec![FieldDef {
+                        name: "v".into(),
+                        ty: Type::Str,
+                        span: span0,
+                        has_default: false,
+                    }],
+                    span: span0,
+                },
+                VariantDef {
+                    name: "Blob".into(),
+                    fields: vec![FieldDef {
+                        name: "v".into(),
+                        ty: Type::Bytes,
+                        span: span0,
+                        has_default: false,
+                    }],
+                    span: span0,
+                },
+            ],
+            span: span0,
+        });
+        self.enum_names.push(("SqlValue".into(), sqlvalue_id));
+        // **`Null` lặp với `Json.Null`**: `find` trả về khớp **đầu** (Json) ở mọi chỗ tìm theo
+        // tên trần ⇒ constructor trần `Null` giữ nghĩa `Json.Null`; dựng `SqlValue.Null` qua
+        // đường ctor **có tiền tố enum** (`SqlValue.Null`, `SqlValue.Integer(1)`…).
+        for (i, n) in ["Null", "Integer", "Real", "Text", "Blob"]
+            .iter()
+            .enumerate()
+        {
+            self.variant_index.push(((*n).to_string(), sqlvalue_id, i));
+        }
+        // --- bản ghi `RowSet`: `columns` theo thứ tự chọn (trùng tên giữ nguyên), `rows` theo cùng thứ tự cột ---
+        let rowset_id = RecId(self.tbl.recs().len() as u32);
+        self.tbl.push_rec(RecDef {
+            name: Some("RowSet".into()),
+            fields: vec![
+                FieldDef {
+                    name: "columns".into(),
+                    ty: Type::List(Box::new(Type::Str)),
+                    span: span0,
+                    has_default: false,
+                },
+                FieldDef {
+                    name: "rows".into(),
+                    ty: Type::List(Box::new(Type::List(Box::new(Type::Enum(sqlvalue_id))))),
+                    span: span0,
+                    has_default: false,
+                },
+            ],
+            span: span0,
+            anonymous: false,
+        });
+        self.rec_names.push(("RowSet".into(), rowset_id));
+    }
+
     /// Khai một tên trong khung hiện tại; khai lại **cùng khung** ⇒ `VS0302` (VD-44 #2).
     ///
     /// **R16 (VD-178)**: `let` **được che tên** trong cùng phạm vi (`PatBind` không báo trùng);
@@ -604,7 +857,22 @@ impl<'a> Lowerer<'a> {
         // khung tệp (`FrameKind::File`); trong hàm vẫn tự do. Khai báo dựng sẵn của chính trình
         // biên dịch (`SymKind::Builtin`, nạp **trước** mọi mục người dùng) được miễn.
         if kind != SymKind::Builtin
-            && matches!(name, "Option" | "Result" | "Some" | "None" | "Ok" | "Err")
+            && matches!(
+                name,
+                "Option"
+                    | "Result"
+                    | "Some"
+                    | "None"
+                    | "Ok"
+                    | "Err"
+                    | "Json"
+                    | "Error"
+                    | "AnyError"
+                    | "Show"
+                    // **VD-241 (Gate 1)**: enum/record dựng sẵn của module `std.sqlite`.
+                    | "SqlValue"
+                    | "RowSet"
+            )
             && self
                 .symbols
                 .frames
@@ -614,7 +882,19 @@ impl<'a> Lowerer<'a> {
             self.diag(
                 &NAME_CODES[1],
                 format!(
-                    "`{name}` là tên dự trữ của enum std (`Option`/`Result`) — không được khai lại ở phạm vi toàn cục"
+                    "`{name}` là tên dự trữ của chuẩn dựng sẵn (`Option`/`Result`/`Json`/`Error`) — không được khai lại ở phạm vi toàn cục"
+                ),
+                span,
+            );
+        }
+        // **VD-223 (điểm 2)** — tên biến/tham số trùng tên module std đã import ⇒ cảnh báo `VS0211`.
+        if matches!(kind, SymKind::Var | SymKind::Param | SymKind::PatBind)
+            && self.opts.std_mods.iter().any(|m| m == name)
+        {
+            self.diag(
+                &vis_diag::SYNTAX_CODES[8],
+                format!(
+                    "tên `{name}` là module std đã import — `{name}.xxx(...)` được hiểu là thành viên của giá trị, không phải module"
                 ),
                 span,
             );
@@ -681,6 +961,21 @@ impl<'a> Lowerer<'a> {
             return true;
         }
         self.opts.imports.contains(&m) && self.symbols.pub_of.get(i).copied().unwrap_or(false)
+    }
+
+    /// **VD-241 (Gate 1)**: `use std.sqlite` đã có trong tệp đang hạ (tiền tố `sqlite` của lời gọi
+    /// `sqlite.open(…)`). Dùng để gate tên kiểu dựng sẵn `SqlValue`/`RowSet` — **thuộc module**,
+    /// không thấy ở tệp ngoài (tên dựng sẵn khác luôn thấy).
+    fn sqlite_duoc_thay(&self) -> bool {
+        self.opts.std_mods.iter().any(|m| m == "sqlite")
+    }
+
+    /// Id enum dựng sẵn `SqlValue` (nếu bảng đã dựng).
+    fn sqlvalue_id(&self) -> Option<EnumId> {
+        self.enum_names
+            .iter()
+            .find(|(n, _)| n == "SqlValue")
+            .map(|(_, id)| *id)
     }
 
     /// Tên module sở hữu ký hiệu đầu tiên mang `name` (dùng cho thông điệp `VS0301`).
@@ -815,7 +1110,7 @@ impl<'a> Lowerer<'a> {
                         .collect()
                 })
                 .unwrap_or_default();
-            return self.named_type(&name, args);
+            return self.named_type(&name, args, first.span);
         }
         let head = node
             .tokens(&self.cst.tokens)
@@ -896,7 +1191,18 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    fn named_type(&mut self, name: &str, args: Vec<Type>) -> Type {
+    fn named_type(&mut self, name: &str, args: Vec<Type>, span: Span) -> Type {
+        // **VD-241 (Gate 1)**: `SqlValue`/`RowSet` thuộc **module `std.sqlite`** — chỉ thấy khi
+        // tệp đã `use std.sqlite`. Ngoài phạm vi đó ⇒ kiểu không tồn tại (`VS0301`), **không**
+        // âm thầm thành tên lạ. Pattern trên giá trị `SqlValue` **không** gate (theo scrutinee).
+        if (name == "SqlValue" || name == "RowSet") && !self.sqlite_duoc_thay() {
+            self.diag(
+                &NAME_CODES[0],
+                format!("không thấy tên `{name}`: module `std.sqlite` chưa được `use`"),
+                span,
+            );
+            return Type::Error;
+        }
         // ST-28: tham số kiểu của `type`/`enum` đang khai ⇒ **xoá kiểu** (`{error}`) —
         // chưa có instantiation thật (nợ VS1b), nhờ vậy trường/biến thể generic không bị `VS0301`.
         if args.is_empty() && self.generic_scope.iter().any(|g| g == name) {
@@ -912,6 +1218,16 @@ impl<'a> Lowerer<'a> {
             };
         }
         match (name, args.len()) {
+            ("Option" | "option", 1) => {
+                // **VD-241 §3+ (A0, 2026-11-19)** — spelled-out `Option[T]` phân giải về
+                // `Type::Opt` **ngay ở lowering** (như `list`/`map`/`Result`), không giữ
+                // `TypeRef` — nhờ vậy HIR (annot tham số / return / let / var / hằng) đi cùng
+                // đường với sugar `T?`, và biên annot/đối số/return nâng **như nhau** cho cả ba
+                // cách viết (sugar · spelled-out · alias). Alias không tham số được thay ngay
+                // bằng chính RHS đã hạ (`Option[Option[int]]` ⇒ `Opt(Opt(int))`).
+                let mut it = args.into_iter();
+                return Type::Opt(Box::new(it.next().unwrap_or(Type::Error)));
+            }
             ("list", 1) => {
                 let mut it = args.into_iter();
                 return Type::List(Box::new(it.next().unwrap_or(Type::Error)));

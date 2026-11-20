@@ -4,8 +4,7 @@
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
-use vis_diag::{Code, RUNTIME_CODES, TYPE_CODES};
-use vis_syntax::{Diagnostic, Span};
+use vis_syntax::Span;
 use vis_types::hir::*;
 use vis_types::lower::Symbols;
 use vis_types::TypeTable;
@@ -13,85 +12,16 @@ use vis_types::TypeTable;
 use crate::gan::{gan_chi_so, gan_truong};
 use crate::value::*;
 
-/// `VS0501` — lỗi runtime chung.
-pub const RT: &Code = &RUNTIME_CODES[0];
-/// `VS0502` — chia/lấy dư cho 0.
-pub const DIV0: &Code = &RUNTIME_CODES[1];
-/// `VS0503` — chỉ số ngoài phạm vi.
-pub const IDX: &Code = &RUNTIME_CODES[2];
-/// **ST-60** — `VS0506`: lỗi trong **thân tác vụ** `async` (message kèm mã gốc).
-pub const TASK_ERR: &Code = &RUNTIME_CODES[5];
-/// **ST-61 (VD-96)** — `VS0504`: gửi vào kênh đã `close`.
-pub const SEND_CLOSED: &Code = &RUNTIME_CODES[3];
-/// **ST-61 (VD-96)** — `VS0505`: deadlock (kênh chặn, không còn tác vụ chạy được).
-pub const DEADLOCK: &Code = &RUNTIME_CODES[4];
-/// **R9 (VD-178)** — `VS0507`: tràn `i64` lúc chạy (tách khỏi `VS0501`).
-pub const OVERFLOW: &Code = &RUNTIME_CODES[6];
-/// `VS0412` — gán cho `let`/tham số (phòng thủ: tyck đã chặn trước).
-pub(crate) const MISMATCH: &Code = &TYPE_CODES[3];
-
-/// **ST-63 (VD-105 (6))**: phần **gọi hàm/closure** tách khỏi `interp.rs` để giữ **R1 ≤ 1.500 dòng**
-/// — chuyển **nguyên văn**, không đổi ngữ nghĩa.
-mod goi;
-
-/// Lỗi runtime kèm `span`.
-#[derive(Debug, Clone)]
-pub struct Trap {
-    pub code: &'static Code,
-    pub msg: String,
-    pub span: Span,
-}
-
-impl Trap {
-    pub fn new(code: &'static Code, msg: impl Into<String>, span: Span) -> Self {
-        Self {
-            code,
-            msg: msg.into(),
-            span,
-        }
-    }
-
-    /// Chẩn đoán có **`line`/`col` thật** từ `span` + văn bản (VD-46).
-    pub fn to_diag(&self, text: &str) -> Diagnostic {
-        let (line, col) = pos(text, self.span);
-        Diagnostic {
-            code: self.code,
-            message: self.msg.clone(),
-            span: self.span,
-            line,
-            col,
-        }
-    }
-}
-
-/// Dừng chương trình: lỗi runtime, hoặc `return`/`?` trả sớm.
-#[derive(Debug)]
-pub enum Abort {
-    Trap(Trap),
-    Ret(Value),
-}
-
-pub type R<T> = Result<T, Abort>;
-
-/// Đối số đã eval: (vị trí, có tên).
-pub(crate) type Args = (Vec<Value>, Vec<(String, Value)>);
-
-/// Nhánh `match` khớp + binding của nó.
-pub(crate) type Picked<'s> = (&'s HArm, Vec<(u32, Value)>);
-
-/// Luồng điều khiển trong thân: bình thường / `break` / `continue`.
-#[derive(Debug, PartialEq)]
-pub(crate) enum Ctrl {
-    Normal,
-    Break,
-    Continue,
-}
+#[path = "frame/core.rs"]
+mod core_types;
+use core_types::goi::{opt_depth_ty, opt_lift_maybe};
+pub use core_types::*;
 
 pub(crate) struct Interp<'a> {
     pub(crate) fns: HashMap<u32, &'a HFn>,
     consts: HashMap<u32, &'a HExpr>,
     /// `enum`/`type` khai trong tệp: `sym → (tên, là_enum)` để `E.A`/`User(...)` có "thẻ kiểu".
-    tags: HashMap<u32, (String, bool)>,
+    pub(crate) tags: HashMap<u32, (String, bool)>,
     main: Option<&'a HFn>,
     stmts: &'a [HStmt],
     pub(crate) env: Env,
@@ -106,7 +36,7 @@ pub(crate) struct Interp<'a> {
     fn_depth: u32,
     /// Độ sâu **khung gọi** đang mở (ST-15): vượt [`MAX_CALL_DEPTH`] ⇒ `VS0501`, không tràn stack.
     depth: u32,
-    types: &'a TypeTable,
+    pub(crate) types: &'a TypeTable,
     #[allow(dead_code)]
     symbols: &'a Symbols,
     /// Host chương trình ngoài (ST-27); `None` ⇒ `VS0604` — interp **không** biết OS.
@@ -115,10 +45,14 @@ pub(crate) struct Interp<'a> {
     pub(crate) fs: Option<&'a mut dyn crate::builtin::FsHost>,
     /// **ST-63 (VD-105)**: host mạng; `None` ⇒ `VS0604` — interp **không** biết `std::net`.
     pub(crate) net: Option<&'a mut dyn crate::builtin::NetHost>,
+    /// **VD-241 (Gate 1)**: host cơ sở dữ liệu; `None` ⇒ `std.sqlite.*` ⇒ `VS0604`.
+    pub(crate) db: Option<&'a mut dyn crate::builtin::DbHost>,
     /// **ST-60**: hàng đợi tác vụ `async` (một `Scheduler` cho mỗi lần chạy).
     pub(crate) sched: std::cell::RefCell<crate::rt::Scheduler>,
     /// **ST-72b (VD-103/VD-106)**: quyền `main` — `(chỉ số tham số, giá trị)` theo thứ tự khai.
     caps: Vec<(u32, Value)>,
+    // **ST-276 / VD-256**: instrumentation ngân sách nằm ở `crate::rt::fee`
+    // (thread-local, mặc định tắt) — Interp không giữ trạng thái; hành vi mặc định y hệt cũ.
 }
 
 impl<'a> Interp<'a> {
@@ -172,6 +106,7 @@ impl<'a> Interp<'a> {
             ngoai: None,
             fs: None,
             net: None,
+            db: None,
             sched: std::cell::RefCell::new(crate::rt::Scheduler::new()),
             caps: Vec::new(),
         }
@@ -193,6 +128,12 @@ impl<'a> Interp<'a> {
     #[allow(dead_code)]
     pub(crate) fn set_net(&mut self, n: &'a mut dyn crate::builtin::NetHost) {
         self.net = Some(n);
+    }
+
+    /// **VD-241 (Gate 1)**: gắn host cơ sở dữ liệu — chỉ dùng trong crate (`run_with_hosts…`).
+    #[allow(dead_code)]
+    pub(crate) fn set_db(&mut self, d: &'a mut dyn crate::builtin::DbHost) {
+        self.db = Some(d);
     }
 
     /// **ST-72b**: gắn giá trị quyền cho các tham số `cap` của `main`.
@@ -288,11 +229,33 @@ impl<'a> Interp<'a> {
 
     fn exec_stmt(&mut self, s: &HStmt) -> R<Ctrl> {
         self.steps += 1;
+        if let Some(a) = self.charge(crate::rt::fee::FeeKind::Stmt, s.span()) {
+            return Err(a);
+        }
         match s {
             HStmt::Let {
-                pat, init, else_, ..
+                pat,
+                ty,
+                init,
+                else_,
+                span,
             } => {
                 let v = self.eval(init)?;
+                if let Some(a) = self.charge(crate::rt::fee::FeeKind::Assign, *span) {
+                    return Err(a);
+                }
+                // **VD-226 §TEST (A0-proxy)**: tự nâng `T → T?` ở vế phải `let` khi chú thích
+                // là `T?` — đồng nhất với codegen (codegen.rs) và spec §4.4 ("tự nâng ở ba vị trí:
+                // gán let x: int? = …, trả về → int? …, đối số"). `Some(_)`/`None` giữ nguyên,
+                // `Result` giữ nguyên; khác đi thì bọc `Value::some`.
+                // **VD-241 §3 (A0, 2026-11-19)** — tự nâng `T → T? → …` tới đủ lớp của annot
+                // (một lớp/biên chuyển đổi; không bọc thêm giá trị đã Option/Result).
+                let v = if ty_là_opt(ty.as_ref()) {
+                    let target = ty.as_ref().map(opt_depth_ty).unwrap_or(0);
+                    opt_lift_maybe(v, target)
+                } else {
+                    v
+                };
                 // **R3b (VD-178)**: `let x = r else:` — bóc `Ok`/`Some`; ngược lại chạy khối `else`.
                 if let Some(e) = else_ {
                     match v {
@@ -329,8 +292,26 @@ impl<'a> Interp<'a> {
                 }
                 Ok(Ctrl::Normal)
             }
-            HStmt::Var { sym, init, .. } => {
+            HStmt::Var {
+                sym,
+                init,
+                ty,
+                span,
+                ..
+            } => {
                 let v = self.eval(init)?;
+                if let Some(a) = self.charge(crate::rt::fee::FeeKind::Assign, *span) {
+                    return Err(a);
+                }
+                // **VD-241 §3+ (A0, 2026-11-19)** — biên **khai `var`** có annot Optional nâng
+                // giá trị như `let` (mirror codegen `HStmt::Var`): `var x: int?? = Some(7)` ⇒ `x`
+                // bằng `Some(Some(7))`. `None` trần giữ nguyên (bước 1 — `lift_opt`).
+                let v = if ty_là_opt(ty.as_ref()) {
+                    let target_d = ty.as_ref().map(opt_depth_ty).unwrap_or(0);
+                    opt_lift_maybe(v, target_d)
+                } else {
+                    v
+                };
                 self.env.borrow_mut().insert(*sym, v);
                 self.mutable.insert(*sym);
                 Ok(Ctrl::Normal)
@@ -350,8 +331,13 @@ impl<'a> Interp<'a> {
                         HExpr::Field { base, name, .. } => {
                             if let HExpr::Var { sym: Some(id), .. } = &**base {
                                 let cu = self.doc_o(*id, target.span())?;
-                                let rhs = self.eval(value)?;
+                                let dep = self.assign_depth(target, &cu); // ST-248: đích trường Opt
+                                let rhs = crate::lift::lift_opt(self.eval(value)?, dep);
                                 let moi = gan_truong(cu, name, rhs, *span)?;
+                                if let Some(a) = self.charge(crate::rt::fee::FeeKind::Assign, *span)
+                                {
+                                    return Err(a);
+                                }
                                 self.ghi_o(*id, moi, *span)?;
                                 return Ok(Ctrl::Normal);
                             }
@@ -359,9 +345,14 @@ impl<'a> Interp<'a> {
                         HExpr::Index { base, index, .. } => {
                             if let HExpr::Var { sym: Some(id), .. } = &**base {
                                 let cu = self.doc_o(*id, target.span())?;
+                                let dep = self.assign_depth(target, &cu); // ST-248: đích phần tử Opt
                                 let i = self.eval(index)?;
-                                let rhs = self.eval(value)?;
+                                let rhs = crate::lift::lift_opt(self.eval(value)?, dep);
                                 let moi = gan_chi_so(cu, i, rhs, *span)?;
+                                if let Some(a) = self.charge(crate::rt::fee::FeeKind::Assign, *span)
+                                {
+                                    return Err(a);
+                                }
                                 self.ghi_o(*id, moi, *span)?;
                                 return Ok(Ctrl::Normal);
                             }
@@ -374,12 +365,18 @@ impl<'a> Interp<'a> {
                             {
                                 if let HExpr::Var { sym: Some(id), .. } = &**goc {
                                     let cu = self.doc_o(*id, target.span())?;
+                                    let dep = self.assign_depth(target, &cu); // ST-248: `x.f[i]`
                                     let truong = self.field_of(cu, name, *span)?;
                                     let i = self.eval(index)?;
-                                    let rhs = self.eval(value)?;
+                                    let rhs = crate::lift::lift_opt(self.eval(value)?, dep);
                                     let moi_truong = gan_chi_so(truong, i, rhs, *span)?;
                                     let cu2 = self.doc_o(*id, target.span())?;
                                     let moi = gan_truong(cu2, name, moi_truong, *span)?;
+                                    if let Some(a) =
+                                        self.charge(crate::rt::fee::FeeKind::Assign, *span)
+                                    {
+                                        return Err(a);
+                                    }
                                     self.ghi_o(*id, moi, *span)?;
                                     return Ok(Ctrl::Normal);
                                 }
@@ -390,6 +387,28 @@ impl<'a> Interp<'a> {
                 }
                 let cur = self.lvalue_get(target)?;
                 let rhs = self.eval(value)?;
+                // **VD-241 §3+ (A0, 2026-11-19)** — biên **gán lại `=`** nâng một lớp khi đích là
+                // biến `var` có annot Optional (`x = Some(7)` với `x: int??` ⇒ `x` bằng
+                // `Some(Some(7))`). Đích `let` không gán được (tyck chặn trước). `None` trần giữ
+                // nguyên (bước 1). **Chưa** nâng ở đích trường/chỉ số (`x.f = …`, `x[i] = …`) —
+                // xem báo cáo.
+                let rhs = match op {
+                    AssignOp::Set => match target {
+                        HExpr::Var { sym: Some(id), .. } => {
+                            let want = self
+                                .symbols
+                                .get(*id)
+                                .and_then(|s| s.ty.clone())
+                                .filter(|t| matches!(t, vis_types::Type::Opt(_)));
+                            match want {
+                                Some(t) => opt_lift_maybe(rhs, opt_depth_ty(&t)),
+                                None => rhs,
+                            }
+                        }
+                        _ => rhs,
+                    },
+                    _ => rhs,
+                };
                 let new = match op {
                     AssignOp::Set => rhs,
                     _ => {
@@ -405,6 +424,9 @@ impl<'a> Interp<'a> {
                         crate::builtin::bin(bop, cur, rhs, *span)?
                     }
                 };
+                if let Some(a) = self.charge(crate::rt::fee::FeeKind::Assign, *span) {
+                    return Err(a);
+                }
                 self.lvalue_set(target, new, *span)?;
                 Ok(Ctrl::Normal)
             }
@@ -457,6 +479,10 @@ impl<'a> Interp<'a> {
                 self.loop_depth += 1;
                 let mut ctrl = Ok(Ctrl::Normal);
                 for v in items {
+                    if let Some(a) = self.charge(crate::rt::fee::FeeKind::Loop, s.span()) {
+                        ctrl = Err(a);
+                        break;
+                    }
                     self.bind_pat(pat, &v);
                     match self.exec_block(body) {
                         Ok(Ctrl::Break) => break,
@@ -475,7 +501,15 @@ impl<'a> Interp<'a> {
             HStmt::While { cond, body, .. } => {
                 let mut guard = 0usize;
                 self.loop_depth += 1;
-                while self.eval(cond)?.truthy(cond.span())? {
+                // **ST-226 (R18b)**: `while let` dùng chung bộ máy `eval_cond` với `if let`.
+                loop {
+                    if let Some(a) = self.charge(crate::rt::fee::FeeKind::Loop, s.span()) {
+                        self.loop_depth -= 1;
+                        return Err(a);
+                    }
+                    if !self.eval_cond(cond)? {
+                        break;
+                    }
                     guard += 1;
                     if guard > 10_000_000 {
                         return Err(Abort::Trap(Trap::new(
@@ -496,6 +530,10 @@ impl<'a> Interp<'a> {
             HStmt::Loop { body, .. } => {
                 self.loop_depth += 1;
                 for _ in 0..10_000_000usize {
+                    if let Some(a) = self.charge(crate::rt::fee::FeeKind::Loop, s.span()) {
+                        self.loop_depth -= 1;
+                        return Err(a);
+                    }
                     if self.exec_block(body)? == Ctrl::Break {
                         self.loop_depth -= 1;
                         self.last = None;
@@ -563,20 +601,11 @@ impl<'a> Interp<'a> {
             }
             HCond::Let { pat, value, .. } => {
                 let v = self.eval(value)?;
-                // `if let Some(x) = o:` — `None` ⇒ nhánh sai; giá trị khác được khớp **theo pattern**.
-                let target = match v {
-                    Value::Enum(ea, va, ag) if ea == "Option" => match va.as_str() {
-                        "None" => return Ok(false),
-                        "Some" if ag.len() == 1 => {
-                            let mut ag = ag;
-                            ag.pop().expect("Some luôn có một đối số")
-                        }
-                        _ => Value::Enum(ea, va, ag),
-                    },
-                    other => other,
-                };
+                // **VD-241 §3 (A0, 2026-11-19)** — `if let Some(x) = o:`/`if let Ok(x) = r:` khớp
+                // theo cấu trúc giá trị thật; KHÔNG bọc ngầm giá trị trần. Giá trị không khớp
+                // pattern ⇒ không vào nhánh (và không bọc/bóc phụ).
                 let snapshot = self.env.borrow().clone();
-                if !self.bind_pat_bool(pat, &target) {
+                if !self.bind_pat_bool(pat, &v) {
                     *self.env.borrow_mut() = snapshot;
                     return Ok(false);
                 }
@@ -591,6 +620,15 @@ impl<'a> Interp<'a> {
 
     fn eval(&mut self, e: &HExpr) -> R<Value> {
         self.steps += 1;
+        // ST-276: E_EXPR cho nút nguồn; call/spawn/await có sự kiện riêng.
+        if !matches!(
+            e,
+            HExpr::Call { .. } | HExpr::Spawn { .. } | HExpr::Await { .. }
+        ) {
+            if let Some(a) = self.charge(crate::rt::fee::FeeKind::Expr, e.span()) {
+                return Err(a);
+            }
+        }
         match e {
             HExpr::Lit { lit, span, .. } => {
                 lit_value(lit).map_err(|m| Abort::Trap(Trap::new(RT, m, *span)))
@@ -606,6 +644,7 @@ impl<'a> Interp<'a> {
                             params: f.params.iter().map(|p| p.sym).collect(),
                             body: HBody::Stmts(f.body.clone()),
                             env: self.env.clone(),
+                            ret_depth: opt_depth_ty(&f.ret),
                         })));
                     }
                     // `enum`/`type` khai trong tệp: thẻ kiểu để `E.A` / `User(...)` chạy được.
@@ -694,7 +733,26 @@ impl<'a> Interp<'a> {
                 args,
                 named,
                 span,
-            } => self.eval_call(callee, args, named, *span),
+            } => {
+                // ST-276: call charge trước đối số (f(g(1)) ⇒ E_CALL(f), E_CALL(g), E_EXPR(1)).
+                let host = match &**callee {
+                    HExpr::Field { .. } => true, // method trên giá trị = host
+                    HExpr::Var { name, sym, .. } => {
+                        sym.and_then(|id| self.fns.get(&id)).is_none()
+                            && builtin_name(name).is_some()
+                    }
+                    _ => false,
+                };
+                let kind = if host {
+                    crate::rt::fee::FeeKind::Builtin
+                } else {
+                    crate::rt::fee::FeeKind::Call
+                };
+                if let Some(a) = self.charge(kind, *span) {
+                    return Err(a);
+                }
+                self.eval_call(callee, args, named, *span)
+            }
             HExpr::Field {
                 base,
                 name,
@@ -702,24 +760,26 @@ impl<'a> Interp<'a> {
                 span,
             } => {
                 let b = self.eval(base)?;
-                let b = if *optional {
+                // **ST-239 (VD-242 §3.2, ca 5)**: VM đúng, interp thiếu nâng một lớp `Opt`.
+                // `None` ⇒ `None`; `Some(u)` ⇒ `Some(u.field)` — **không flatten**. Dùng chung
+                // `lift_opt(v, 1)` với `$lift-opt` của VM để field đã `Opt` không bị bọc chồng.
+                // Checker đã chặn base thường (`?.` chỉ trên `Option[U]`), nhưng giữ nhánh phòng vệ.
+                let (b, nang) = if *optional {
                     match b {
-                        // **VD-204 (1)**: enum `Option` thật — `None` ⇒ `None`; `Some(v)` ⇒ bóc `v`;
-                        // giá trị khác (không phải `Option`) đi thẳng như cũ.
-                        Value::Enum(ea, va, ag) if ea == "Option" => match va.as_str() {
+                        Value::Enum(ea, va, mut ag) if ea == "Option" => match va.as_str() {
                             "None" => return Ok(Value::none()),
                             "Some" if ag.len() == 1 => {
-                                let mut ag = ag;
-                                ag.pop().expect("Some luôn có một đối số")
+                                (ag.pop().expect("Some luôn có một đối số"), true)
                             }
-                            _ => Value::Enum(ea, va, ag),
+                            _ => (Value::Enum(ea, va, ag), false),
                         },
-                        other => other,
+                        other => (other, false),
                     }
                 } else {
-                    b
+                    (b, false)
                 };
-                self.field_of(b, name, *span)
+                let v = self.field_of(b, name, *span)?;
+                Ok(if nang { crate::lift::lift_opt(v, 1) } else { v })
             }
             HExpr::Index { base, index, span } => {
                 let b = self.eval(base)?;
@@ -744,11 +804,17 @@ impl<'a> Interp<'a> {
                 Ok(Value::List(vs))
             }
             HExpr::Map { entries, .. } => {
-                let mut kv = Vec::new();
+                // **ST-239 (VD-242 §3.4, ca 170)**: runtime last-wins — mỗi khoá một entry,
+                // giữ giá trị cuối và vị trí chèn đầu. Khoá trùng **tĩnh** đã bị checker chặn.
+                let mut kv: Vec<(Value, Value)> = Vec::new();
                 for (k, v) in entries {
                     let kk = self.eval(k)?;
                     let vv = self.eval(v)?;
-                    kv.push((kk, vv));
+                    if let Some(e) = kv.iter_mut().find(|(kk2, _)| kk2.eq_value(&kk)) {
+                        e.1 = vv;
+                    } else {
+                        kv.push((kk, vv));
+                    }
                 }
                 Ok(Value::Map(kv))
             }
@@ -904,10 +970,13 @@ impl<'a> Interp<'a> {
                     ))),
                 }
             }
-            HExpr::Lambda { params, body, .. } => Ok(Value::Fn(Rc::new(Closure {
+            HExpr::Lambda {
+                params, body, ret, ..
+            } => Ok(Value::Fn(Rc::new(Closure {
                 name: String::new(),
                 params: params.iter().map(|p| p.sym).collect(),
                 body: body.clone(),
+                ret_depth: opt_depth_ty(ret),
                 // ST-15b (mục 2): **chụp snapshot** môi trường tại điểm tạo closure — interp dùng
                 // một env phẳng và khôi phục tham số khi hàm trả về, nên nếu giữ `Rc` chung thì
                 // closure thoát khỏi hàm sẽ mất biến đã bắt. Chọn snapshot (ghi JOURNAL): biến
@@ -932,6 +1001,9 @@ impl<'a> Interp<'a> {
             HExpr::Ref { expr, .. } => self.eval(expr),
             // **ST-60 (VD-90)**: `await t` chạy tác vụ **tới hoàn tất** (hoặc trả cache).
             HExpr::Await { expr, span } => {
+                if let Some(a) = self.charge(crate::rt::fee::FeeKind::Await, *span) {
+                    return Err(a);
+                }
                 let v = self.eval(expr)?;
                 match v {
                     Value::Task(t) => crate::rt::await_task(self, &t, *span),
@@ -949,6 +1021,10 @@ impl<'a> Interp<'a> {
                 named,
                 span,
             } => {
+                // **ST-276**: $spawn nội bộ chỉ mang E_SPAWN, không cộng E_BUILTIN.
+                if let Some(a) = self.charge(crate::rt::fee::FeeKind::Spawn, *span) {
+                    return Err(a);
+                }
                 let _ = named;
                 let id = match &**callee {
                     HExpr::Var { sym: Some(id), .. } => Some(*id),
@@ -1110,16 +1186,20 @@ impl<'a> Interp<'a> {
                 let mut args = args;
                 self.field_of(args.pop().expect("Some luôn có một đối số"), name, span)
             }
+            // **Parity interp ↔ VM**: field access trên giá trị `Enum` không được định nghĩa ở
+            // ViScript ⇒ `VS0501`. Ngoại lệ hợp lệ duy nhất: **atom biến thể rỗng** `E.A` —
+            // `E` evaluate về `Enum(en, "", [])` (tag atom marker) và `x.Type` dựng biến thể rỗng.
             Value::Enum(en, variant, args) => {
-                if variant == name {
-                    Ok(Value::Enum(en, variant, args))
-                } else if args.is_empty() {
-                    // `Shape.Empty` — biến thể không đối số.
-                    Ok(Value::Enum(en, name.to_string(), Vec::new()))
+                if variant.is_empty() && args.is_empty() {
+                    Ok(Value::Enum(
+                        en,
+                        name.to_string(),
+                        Vec::new(), /* zero-width */
+                    ))
                 } else {
                     Err(Abort::Trap(Trap::new(
                         RT,
-                        format!("enum không có biến thể `{name}`"),
+                        format!("`{name}` không phải trường"),
                         span,
                     )))
                 }
@@ -1178,6 +1258,43 @@ impl<'a> Interp<'a> {
                 format!("không chỉ số được `{}` bằng `{}`", other.show(), idx.show()),
                 span,
             ))),
+        }
+    }
+
+    /// **ST-248 (VD-242 §3.3)** — số lớp `Opt` của đích gán trường/chỉ số. Kiểu đích lấy từ
+    /// annotation của biến gốc, hoặc (bản ghi không annot) từ tên bản ghi runtime qua `TypeTable`.
+    fn assign_depth(&self, t: &HExpr, root: &Value) -> usize {
+        self.expr_ty(t, root)
+            .map(|ty| opt_depth_ty(&ty))
+            .unwrap_or(0)
+    }
+
+    /// **ST-248** — kiểu tĩnh của gốc/target (`Var`/`Field`/`Index`); `None` ⇒ không nâng.
+    fn expr_ty(&self, e: &HExpr, root: &Value) -> Option<vis_types::Type> {
+        match e {
+            HExpr::Var { sym: Some(id), .. } => {
+                if let Some(t) = self.symbols.get(*id).and_then(|s| s.ty.clone()) {
+                    return Some(t);
+                }
+                match root {
+                    Value::Record(ten, _) => {
+                        self.types.rec_by_name(ten).map(vis_types::Type::Record)
+                    }
+                    _ => None,
+                }
+            }
+            HExpr::Field { base, name, .. } => match self.expr_ty(base, root) {
+                Some(vis_types::Type::Record(id)) => {
+                    self.types.field(id, name).map(|f| f.ty.clone())
+                }
+                _ => None,
+            },
+            HExpr::Index { base, .. } => match self.expr_ty(base, root) {
+                Some(vis_types::Type::Map(_, v)) => Some(*v),
+                Some(vis_types::Type::List(el)) => Some(*el),
+                _ => None,
+            },
+            _ => None,
         }
     }
 
@@ -1375,4 +1492,9 @@ pub fn dinh_dang(v: &Value, spec: &str, span: Span) -> Result<String, Abort> {
         Value::Str(s) => s.clone(),
         other => other.show(),
     })
+}
+
+/// `true` khi `let x: T? = …` (chú thích `Optional` — mọi lớp).
+fn ty_là_opt(t: Option<&vis_types::ty::Type>) -> bool {
+    matches!(t, Some(vis_types::ty::Type::Opt(_)))
 }

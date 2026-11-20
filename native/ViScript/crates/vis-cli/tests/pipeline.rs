@@ -4,10 +4,24 @@
 //! Khoá: `a | b` ghi **stdout của `a`** vào **stdin** của `b` (đóng stdin sau khi ghi); `complete` cho
 //! record `{stdout: list[str], stderr: list[str], code: int}` và **exit≠0 không còn là lỗi**;
 //! `complete` trên stage **Vis** ⇒ `VS0602`; pipe vẫn là **giá trị** (không đổi HIR/codegen).
-//! Hermetic: chỉ dùng `/bin/echo`, `/usr/bin/printf`, `/bin/cat`, `/usr/bin/grep` — **assert tồn tại**.
+//! Hermetic: chỉ dùng `{TC} echo`, `{TC} printf`, `{TC} cat`, `{TC} grep` — **assert tồn tại**.
 
 use std::path::PathBuf;
 use std::process::Command;
+
+const TC: &str = env!("CARGO_BIN_EXE_test-child");
+
+/// PATH có thêm thư mục chứa `test-child` — cho fixture `.vish` gọi `test-child` bare.
+fn path_voi_tc() -> std::ffi::OsString {
+    let tc = std::path::Path::new(env!("CARGO_BIN_EXE_test-child"));
+    let mut muc: Vec<std::path::PathBuf> =
+        vec![tc.parent().expect("test-child parent").to_path_buf()];
+    let cur = std::env::var_os("PATH").unwrap_or_default();
+    for p in std::env::split_paths(&cur) {
+        muc.push(p);
+    }
+    std::env::join_paths(muc).expect("join PATH")
+}
 
 fn goc() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../")
@@ -36,6 +50,7 @@ fn chay(d: &std::path::Path, tag: &str, src: &str, env: &[(&str, &str)]) -> (i32
     )
     .expect("ghi");
     let mut c = Command::new(env!("CARGO_BIN_EXE_vis"));
+    c.env("PATH", path_voi_tc());
     c.arg("run").arg(&p);
     for (k, v) in env {
         c.env(k, v);
@@ -52,15 +67,7 @@ fn chay(d: &std::path::Path, tag: &str, src: &str, env: &[(&str, &str)]) -> (i32
 
 #[test]
 fn chuong_trinh_ngoai_co_that() {
-    for t in [
-        "/bin/echo",
-        "/usr/bin/printf",
-        "/bin/cat",
-        "/usr/bin/grep",
-        "/bin/sleep",
-    ] {
-        co(t);
-    }
+    co(TC);
 }
 
 // ---------- pipe → stdin ----------
@@ -68,7 +75,7 @@ fn chuong_trinh_ngoai_co_that() {
 #[test]
 fn echo_qua_cat_nhan_stdin() {
     let d = tam("cat");
-    let (c, o, e) = chay(&d, "cat", "/bin/echo a | /bin/cat\n", &[]);
+    let (c, o, e) = chay(&d, "cat", &format!("{} echo a | {} cat\n", TC, TC), &[]);
     assert_eq!(c, 0, "stderr: {e}");
     assert_eq!(o, "[a]\n", "cat phải nhận stdin từ echo");
     let _ = std::fs::remove_dir_all(&d);
@@ -77,7 +84,7 @@ fn echo_qua_cat_nhan_stdin() {
 #[test]
 fn echo_qua_grep_tim_thay() {
     let d = tam("grep");
-    let (c, o, e) = chay(&d, "grep", "/bin/echo a | /usr/bin/grep a\n", &[]);
+    let (c, o, e) = chay(&d, "grep", &format!("{} echo a | {} grep a\n", TC, TC), &[]);
     assert_eq!(c, 0, "stderr: {e}");
     assert_eq!(o, "[a]\n");
     let _ = std::fs::remove_dir_all(&d);
@@ -86,7 +93,7 @@ fn echo_qua_grep_tim_thay() {
 #[test]
 fn grep_khong_khop_van_la_loi_khi_khong_complete() {
     let d = tam("grep0");
-    let (c, _, e) = chay(&d, "grep0", "/bin/echo x | /usr/bin/grep z\n", &[]);
+    let (c, _, e) = chay(&d, "grep0", &format!("{TC} echo x | {TC} grep z\n"), &[]);
     // **R9 (VD-178, C1)**: lỗi chạy có mã ⇒ exit **101** (trước: 1).
     assert_eq!(c, 101, "exit≠0 ⇒ VS0501 như VD-60");
     assert!(
@@ -101,7 +108,12 @@ fn grep_khong_khop_van_la_loi_khi_khong_complete() {
 #[test]
 fn complete_grep_khong_khop_het_la_loi() {
     let d = tam("cmp");
-    let (c, o, e) = chay(&d, "cmp", "/bin/echo x | /usr/bin/grep z | complete\n", &[]);
+    let (c, o, e) = chay(
+        &d,
+        "cmp",
+        &format!("{TC} echo x | {TC} grep z | complete\n"),
+        &[],
+    );
     assert_eq!(c, 0, "complete ⇒ **không** còn VS0501: {e}");
     // **SỬA KÈM LÝ DO (ST-41)**: `complete` trả **một bản ghi** ⇒ khối khoá–giá trị (Render, §9.6).
     assert_eq!(o, "stdout  []\nstderr  []\ncode    1\n");
@@ -114,7 +126,7 @@ fn complete_grep_khop_code_0() {
     let (c, o, _) = chay(
         &d,
         "cmp2",
-        "/bin/echo x | /usr/bin/grep x | complete\n",
+        &format!("{TC} echo x | {TC} grep x | complete\n"),
         &[],
     );
     assert_eq!(c, 0);
@@ -127,20 +139,21 @@ fn complete_grep_khop_code_0() {
 fn complete_giu_stderr_va_code_khac_0() {
     let d = tam("cmp3");
     // `grep` với cờ lạ ⇒ exit 2 + stderr; `complete` giữ **cả hai**, không thành VS0501.
-    let (c, o, e) = chay(&d, "cmp3", "/usr/bin/grep --khong-co | complete\n", &[]);
+    let (c, o, e) = chay(
+        &d,
+        "cmp3",
+        &format!("{TC} grep --khong-co | complete\n"),
+        &[],
+    );
     assert_eq!(c, 0, "stderr: {e}");
     // **SỬA KÈM LÝ DO (ST-41)**: `complete` trả **một bản ghi** ⇒ giá trị cuối pipeline in **khối
     // khoá–giá trị** (`Render`, §9.6): `stderr  […]` (hai dấu cách), không còn `stderr: […]`.
     //
     // **VD-132 (ST-134) — ca phụ thuộc nền**: thông điệp lỗi của `grep` in **tên chương trình** theo
-    // chuẩn của nền: GNU grep (Linux) in `argv[0]` nguyên văn — ta gọi `/usr/bin/grep` nên là
-    // `/usr/bin/grep:`; BSD grep (macOS) in tên chương trình `grep:`. Mỗi nhánh khẳng định **giá trị
+    // chuẩn của nền: GNU grep (Linux) in `argv[0]` nguyên văn — ta gọi `{TC} grep` nên là
+    // `{TC} grep:`; BSD grep (macOS) in tên chương trình `grep:`. Mỗi nhánh khẳng định **giá trị
     // cụ thể**; record vẫn phải mang đủ stderr + `code 2` (sản phẩm không đổi).
-    let tien_to = if cfg!(target_os = "linux") {
-        "stderr  [/usr/bin/grep:"
-    } else {
-        "stderr  [grep:"
-    };
+    let tien_to = "stderr  [test-child grep: unrecognized option '--khong-co'";
     assert!(
         o.contains(tien_to),
         "stderr phải có trong record với tiền tố {tien_to:?}: {o}"
@@ -165,7 +178,7 @@ fn complete_tren_stage_vis_la_vs0602() {
 #[test]
 fn complete_co_doi_so_la_vs0602() {
     let d = tam("vis2");
-    let (c, _, e) = chay(&d, "vis2", "/bin/echo a | complete 1\n", &[]);
+    let (c, _, e) = chay(&d, "vis2", &format!("{} echo a | complete 1\n", TC), &[]);
     assert_eq!(c, 2, "stderr: {e}");
     assert!(e.contains("VS0602"), "stderr: {e}");
     let _ = std::fs::remove_dir_all(&d);
@@ -176,7 +189,12 @@ fn complete_co_doi_so_la_vs0602() {
 #[test]
 fn printf_khong_newline_qua_cat_khong_them_dong_rong() {
     let d = tam("printf");
-    let (c, o, e) = chay(&d, "printf", "/usr/bin/printf \"x\" | /bin/cat\n", &[]);
+    let (c, o, e) = chay(
+        &d,
+        "printf",
+        &format!("{TC} printf \"x\" | {TC} cat\n"),
+        &[],
+    );
     assert_eq!(c, 0, "stderr: {e}");
     assert_eq!(o, "[x]\n", "**một** dòng, không thừa dòng rỗng");
     let _ = std::fs::remove_dir_all(&d);
@@ -185,7 +203,12 @@ fn printf_khong_newline_qua_cat_khong_them_dong_rong() {
 #[test]
 fn printf_hai_dong_qua_cat_ra_hai_dong() {
     let d = tam("printf2");
-    let (c, o, _) = chay(&d, "printf2", "/usr/bin/printf \"a\\nb\" | /bin/cat\n", &[]);
+    let (c, o, _) = chay(
+        &d,
+        "printf2",
+        &format!("{TC} printf \"a\\nb\" | {TC} cat\n"),
+        &[],
+    );
     assert_eq!(c, 0);
     assert_eq!(o, "[a, b]\n", "hai dòng, không dòng rỗng");
     let _ = std::fs::remove_dir_all(&d);
@@ -197,7 +220,7 @@ fn list_nhieu_dong_qua_grep_loc_dung_dong() {
     let (c, o, _) = chay(
         &d,
         "list",
-        "/usr/bin/printf \"a\\nb\" | /usr/bin/grep b\n",
+        &format!("{TC} printf \"a\\nb\" | {TC} grep b\n"),
         &[],
     );
     assert_eq!(c, 0);
@@ -209,7 +232,7 @@ fn list_nhieu_dong_qua_grep_loc_dung_dong() {
 fn raw_str_di_nguyen_van_khong_them_newline() {
     let d = tam("raw");
     // `--raw` ⇒ `str` nguyên văn ⇒ **không** nối thêm `\n`; `cat` in đúng một dòng.
-    let (c, o, e) = chay(&d, "raw", "/usr/bin/printf x --raw | /bin/cat\n", &[]);
+    let (c, o, e) = chay(&d, "raw", &format!("{TC} printf x --raw | {TC} cat\n"), &[]);
     assert_eq!(c, 0, "stderr: {e}");
     assert_eq!(o, "[x]\n");
     let _ = std::fs::remove_dir_all(&d);
@@ -223,14 +246,14 @@ fn timeout_neu_ro_stage() {
     let (c, _, e) = chay(
         &d,
         "to",
-        "/bin/sleep 5 | /bin/cat\n",
+        &format!("{TC} sleep 5 | {TC} cat\n"),
         &[("VIS_CMD_TIMEOUT_MS", "50")],
     );
     // **R9 (VD-178, C1)**: lỗi chạy có mã ⇒ exit **101** (trước: 1).
     assert_eq!(c, 101, "stderr: {e}");
     assert!(e.contains("VS0501"), "stderr: {e}");
     assert!(
-        e.contains("stage `/bin/sleep`"),
+        e.contains("stage `") && e.contains(TC),
         "thông điệp timeout phải nêu stage: {e}"
     );
     let _ = std::fs::remove_dir_all(&d);
@@ -250,6 +273,7 @@ fn fixture_vish_trong_test_cmd_pipe() {
     ] {
         let p = goc().join("test/cmd/pipe").join(format!("{ten}.vish"));
         let o = Command::new(env!("CARGO_BIN_EXE_vis"))
+            .env("PATH", path_voi_tc())
             .arg("run")
             .arg(&p)
             .output()
@@ -277,15 +301,17 @@ fn vm_co_host_chay_cung_interp() {
     let p = d.join("vm.vish");
     std::fs::write(
         &p,
-        "# SPDX-License-Identifier: MIT OR Apache-2.0\n/bin/echo a | /bin/cat\n",
+        format!("# SPDX-License-Identifier: MIT OR Apache-2.0\n{TC} echo a | {TC} cat\n"),
     )
     .expect("ghi");
     let interp = Command::new(env!("CARGO_BIN_EXE_vis"))
+        .env("PATH", path_voi_tc())
         .arg("run")
         .arg(&p)
         .output()
         .expect("chạy interp");
     let vm = Command::new(env!("CARGO_BIN_EXE_vis"))
+        .env("PATH", path_voi_tc())
         .args(["run", "--vm", "--no-cache"])
         .arg(&p)
         .output()

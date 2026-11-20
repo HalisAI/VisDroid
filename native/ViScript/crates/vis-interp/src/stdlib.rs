@@ -7,6 +7,8 @@
 //! Mọi hàm **thuần** trừ `std.time.*` (đọc đồng hồ trong Rust, **không** thêm method vào [`Host`]);
 //! `std.fs` **không** ở đây (ST-27), `std.json.decode` **chưa** có (VS1b — `VS0301` ở tầng hạ).
 
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::sync::OnceLock;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
@@ -16,6 +18,7 @@ use vis_types::stdlib::{sig_of, Ty};
 
 use crate::builtin::Host;
 use crate::interp::{Abort, Trap, R};
+use crate::rt::ReactorOp;
 use crate::value::{eq, Value};
 
 /// `Err(String)` của host ⇒ `Result` của VS0 (`Err(msg)`), **không** phải trap.
@@ -23,6 +26,111 @@ use crate::value::{eq, Value};
 /// thành **trap `VS0604`** (không bắt được), thay vì `Err(str)` dữ liệu (vượt quyền là lỗi **môi
 /// trường**, không phải dữ liệu chương trình).
 pub const DAU_QUYEN: &str = "\u{1}VS0604:";
+
+/// **ST-238 / VD-242 (nợ #167)**: trần `max_bytes` cho `net.read`. Input người dùng (kể cả
+/// `i64::MAX`, âm, hay giá trị chuyển kiểu overflow) **không** được phép ép host cấp phát bộ nhớ
+/// tùy ý (OOM ⇒ abort). Vượt trần ⇒ `Result.Err` dữ liệu, không trap, không panic.
+pub const NET_READ_CAP: i64 = 8 * 1024 * 1024;
+
+// ===========================================================================
+// ST-277 / VD-256 — connect/write nonblocking trên ĐƯỜNG FRAME TEST (chỉ test).
+//
+// `rt.rs`/trait `FrameReactorBackend` KHÔNG đổi (zero-dep, cross-platform). Adapter
+// thật nằm trong integration test Linux; core chỉ cần (a) ghi dữ liệu `net.write` vào
+// một kênh chung và (b) đi qua `frame_reactor_poll_io(ReactorOp::Read, ...)` với handle
+// được mã hoá `N:<addr>` / `W:<tay>`. Adapter đọc kênh này, tự làm nonblocking
+// connect (kiểm tra SO_ERROR khi readiness) và partial write (lưu offset). Mọi cơ chế
+// deadline/token/generation/cleanup đã có trong `frame_real_poll` được TÁI DÙNG nguyên
+// văn — không helper mới trong `rt.rs`. Runtime mặc định (`frame.enabled == false`)
+// và API ngôn ngữ (`net.connect`/`net.write`, chữ ký, giá trị trả) không đổi.
+// ===========================================================================
+
+/// Tiền tố handle cho một lần `net.connect` trên đường frame test (`N:<dia_chi>`).
+#[doc(hidden)]
+pub const FRAME_NET_CONNECT: &str = "N:";
+/// Tiền tố handle cho một lần `net.write` trên đường frame test (`W:<tay>`).
+#[doc(hidden)]
+pub const FRAME_NET_WRITE: &str = "W:";
+/// Hạn mặc định của `net.write` trên đường frame test (ngôn ngữ không có đối số timeout).
+/// Chọn rộng cho loopback; vẫn là hạn monotonic DUY NHẤT, không reset theo readiness.
+#[doc(hidden)]
+pub const FRAME_WRITE_TIMEOUT_MS: i64 = 5_000;
+
+#[derive(Default)]
+struct FrameNetIo {
+    /// `W:<tay>` → bytes cần gửi (adapter `take` sang trạng thái riêng ở lần poll đầu).
+    writes: HashMap<String, Vec<u8>>,
+    /// Test có thể thu hẹp hạn write để kiểm chứng timeout mà không đổi API ngôn ngữ.
+    write_timeout_ms: Option<i64>,
+}
+thread_local! {
+    static FRAME_NET_IO: RefCell<FrameNetIo> = RefCell::new(FrameNetIo::default());
+}
+
+/// **Chỉ test**: ghi bytes cần gửi cho khoá `W:<tay>` trước khi gọi `frame_reactor_poll_io`.
+#[doc(hidden)]
+pub fn frame_net_set_write(key: &str, data: &[u8]) {
+    FRAME_NET_IO.with(|x| {
+        x.borrow_mut().writes.insert(key.to_string(), data.to_vec());
+    });
+}
+
+/// **Chỉ test**: lấy (và xoá) bytes cần gửi của khoá `W:<tay>`.
+#[doc(hidden)]
+pub fn frame_net_take_write(key: &str) -> Option<Vec<u8>> {
+    FRAME_NET_IO.with(|x| x.borrow_mut().writes.remove(key))
+}
+
+/// **Chỉ test**: đặt lại hạn write (ms); `None` ⇒ dùng [`FRAME_WRITE_TIMEOUT_MS`].
+#[doc(hidden)]
+pub fn frame_net_set_write_timeout(ms: Option<i64>) {
+    FRAME_NET_IO.with(|x| x.borrow_mut().write_timeout_ms = ms);
+}
+
+/// **Chỉ test**: hạn write hiệu lực, luôn dương (tránh trần chờ selector vô hạn).
+#[doc(hidden)]
+pub fn frame_net_write_timeout() -> i64 {
+    FRAME_NET_IO.with(|x| {
+        x.borrow()
+            .write_timeout_ms
+            .unwrap_or(FRAME_WRITE_TIMEOUT_MS)
+            .max(1)
+    })
+}
+
+/// **Chỉ test**: `net.write` trả `Result<(), str>` — đổi payload `Ok(str)` của reactor
+/// thành `Ok(())`, giữ nguyên `Err` (hợp đồng số byte/lỗi KHÔNG đổi).
+fn frame_unit_result(v: Value) -> Value {
+    match &v {
+        Value::Enum(ea, va, ag) if ea == "Result" && va == "Ok" && ag.len() == 1 => {
+            Value::ok(Value::Unit)
+        }
+        _ => v,
+    }
+}
+
+/// **ST-238 / VD-242 (nợ #167)**: validate `max_bytes` từ người dùng. `i64::MAX` (overflow khi
+/// chuyển `usize`), âm, và giá trị vượt trần đều bị từ chối **trước** khi host cấp phát.
+fn gioi_han_net_read(toi_da: i64) -> Result<usize, String> {
+    if toi_da < 0 {
+        return Err("net.read: `max_bytes` không được âm".to_string());
+    }
+    if toi_da > NET_READ_CAP {
+        return Err(format!(
+            "net.read: `max_bytes` {toi_da} vượt giới hạn {NET_READ_CAP} byte"
+        ));
+    }
+    Ok(toi_da as usize)
+}
+
+// **VD-241 pre-merge §1 (2026-11-19)**: `DAU_LOI_GOI` (VS0501) **đã bị bỏ** — mọi lỗi host
+// (handle giả/đã đóng/sai loại, SQL quá dài, params thiếu/thừa/quá, vượt rows/bytes/connections,
+// timeout, authorizer/policy từ chối, lỗi SQLite…) đều là **lỗi dữ liệu/runtime** ⇒ `Result.Err`
+// (`Err(Error)`), KHÔNG trap `VS0501`. Chỉ còn **hai** lớp ngoài `Result`: (a) lỗi tĩnh/checker-time
+// (sai kiểu/sai arity — tầng `kiem`, không đổi phạm vi), (b) bất biến nội bộ bị phá (bug nội bộ —
+// cơ chế chẩn đoán nội bộ hiện hành). Lỗi data **không** mang dấu prefix — cùng mẫu `DAU_QUYEN`
+// (lọc bằng `strip_prefix`), khác ở chỗ **không** cần dấu: mọi `Err` host không có `DAU_QUYEN`
+// ⇒ `Err(Error)` dữ liệu.
 
 fn hop_nhat_fs(r: Result<Value, String>, span: Span) -> Result<Value, Abort> {
     match r {
@@ -33,7 +141,8 @@ fn hop_nhat_fs(r: Result<Value, String>, span: Span) -> Result<Value, Abort> {
                 msg.to_string(),
                 span,
             ))),
-            None => Ok(Value::err(Value::Str(e))),
+            // Mọi lỗi host khác ⇒ `Err(Error)` dữ liệu (VD-241 pre-merge §1).
+            None => Ok(Value::err(Value::ban_ghi_error(e, None))),
         },
     }
 }
@@ -69,7 +178,12 @@ fn kiem(name: &str, args: &[Value], span: Span) -> Result<(), Abort> {
         let ok = match t {
             // **ST-58 (VD-94/VD-99)**: biến kiểu / `list[T]` / `map[K,V]` — thân hàm tự kiểm như
             // trước với `Any` (tyck đã chặn **tĩnh** phần lớn; dữ liệu không kiểu vẫn tới đây).
-            Ty::Var(_) | Ty::List(_) | Ty::Map(..) => true,
+            Ty::Var(_) | Ty::Map(..) => true,
+            // **VD-241**: `list[SqlValue]` (params của `std.sqlite`) — kiểm **phần tử** là `SqlValue`.
+            Ty::List(inner) if **inner == Ty::SqlValue => {
+                matches!(a, Value::List(xs) if xs.iter().all(|v| matches!(v, Value::Enum(e, _, _) if e == "SqlValue")))
+            }
+            Ty::List(_) => true,
             Ty::Int => matches!(a, Value::Int(_)),
             Ty::Str => matches!(a, Value::Str(_)),
             Ty::Bool => matches!(a, Value::Bool(_)),
@@ -77,8 +191,23 @@ fn kiem(name: &str, args: &[Value], span: Span) -> Result<(), Abort> {
                 matches!(a, Value::List(xs) if xs.iter().all(|v| matches!(v, Value::Str(_))))
             }
             Ty::FnKhoa => matches!(a, Value::Fn(_) | Value::Vm(_) | Value::Builtin(_)),
-            // ST-33: `std.fs` trả `Result[..]` — kiểu **trả**, không dùng để kiểm đối số.
-            Ty::ResultStrStr | Ty::ResultUnitStr | Ty::ResultListStrStr | Ty::ResultHead => true,
+            // **ST-33: `std.fs` trả `Result[..]` — kiểu **trả**, không dùng để kiểm đối số.
+            // **VD-222**: `Error`/`Json`/`Result[Json, Error]` — kiểu **trả** của `std.*` (lỗi/JSON),
+            // không dùng để kiểm đối số người dùng; runtime giữ nguyên **tín hiệu** như trước.
+            Ty::ResultStrStr
+            | Ty::ResultUnitStr
+            | Ty::ResultListStrStr
+            | Ty::ResultHead
+            | Ty::ResultJsonErr
+            | Ty::Error
+            | Ty::Json
+            // **VD-241 (Gate 1)**: `Result[RowSet, Error]` cũng là kiểu **trả** của `std.sqlite.query`.
+            | Ty::ResultIntErr
+            | Ty::ResultBoolErr
+            | Ty::ResultRowSetErr => true,
+            // **VD-241**: `SqlValue` tham số (chưa dùng ở vị trí đối số)/`RowSet` — kiểm runtime nếu đi qua.
+            Ty::SqlValue => matches!(a, Value::Enum(e, _, _) if e == "SqlValue"),
+            Ty::RowSet => matches!(a, Value::Record(n, _) if n == "RowSet"),
         };
         if !ok {
             return Err(loi(
@@ -236,7 +365,31 @@ pub fn call(host: &mut dyn Host, name: &str, args: Vec<Value>, span: Span) -> R<
         "list.sort" => {
             let xs = danh_sach(name, &args[0], 0, span)?.to_vec();
             let mut ds = xs.clone();
-            ds.sort_by(|a, b| a.cmp_value(b).unwrap_or(std::cmp::Ordering::Equal));
+            // Phần tử đơn cũng phải kiểm: `sort_by` không gọi comparator cho danh sách 1 phần tử.
+            if xs.iter().any(|x| x.cmp_value(x).is_none()) {
+                return Err(loi(
+                    "`list.sort`: không so được các phần tử (NaN hoặc kiểu chưa có thứ tự)",
+                    span,
+                ));
+            }
+            // **ST-240 / VD-242 §3.5 (nợ #168)**: không được `unwrap_or(Equal)` — đó là im lặng
+            // giữ nguyên thứ tự khi gặp `NaN` (hoặc kiểu chưa có thứ tự). Báo lỗi theo cơ chế
+            // hiện hành (`VS0501`, cùng `sort_by`). Kết quả sắp một phần bị **huỷ hoàn toàn**
+            // (trả `Err`, không trả danh sách), nên không có "sắp nửa rồi mới báo lỗi".
+            let mut khong_so_duoc = false;
+            ds.sort_by(|a, b| match a.cmp_value(b) {
+                Some(o) => o,
+                None => {
+                    khong_so_duoc = true;
+                    std::cmp::Ordering::Equal
+                }
+            });
+            if khong_so_duoc {
+                return Err(loi(
+                    "`list.sort`: không so được các phần tử (NaN hoặc kiểu chưa có thứ tự)",
+                    span,
+                ));
+            }
             Ok(Value::List(ds))
         }
         // ST-53: **cùng lõi** `sap_xep_theo_khoa` với shell `sort_by`; ST-56: khoá nhận **`int`
@@ -376,19 +529,30 @@ pub fn call(host: &mut dyn Host, name: &str, args: Vec<Value>, span: Span) -> R<
         // ----- std.json (encode + decode — ST-33) -----
         "json.decode" => {
             let s = chuoi(name, &args[0], 0, span)?;
+            // **ST-240 / VD-242 §3.5 (nợ #175)**: `01` phải bị từ chối. Lỗi là **dữ liệu**
+            // (`Result.Err` của chương trình), không phải trap — cùng mẫu với lỗi cú pháp JSON
+            // của `crate::json::decode`.
+            if let Some(off) = json_zero_dau(s) {
+                let e = format!("JSON không hợp lệ ở byte {off}: số có số 0 đầu");
+                return Ok(Value::err(Value::ban_ghi_error(e, None)));
+            }
             match crate::json::decode(s) {
-                Ok(v) => Ok(Value::ok(v)),
-                Err(e) => Ok(Value::err(Value::Str(e))),
+                // **VD-222 (điểm 4)**: trả `Result[Json, Error]` — bọc cây JSON vào enum `Json`.
+                Ok(v) => Ok(Value::ok(crate::json::boc(v))),
+                Err(e) => Ok(Value::err(Value::ban_ghi_error(e, None))),
             }
         }
-        "json.encode" => {
+        "json.encode" | "json.encode_pretty" => {
+            // **ST-238 / VD-242 (nợ #169, Q4b, §3.5)**: NaN/vô cực (kể cả `Percent`) ⇒ **lỗi**,
+            // không xuất token `inf`/`NaN` và không tự đổi `null`. Kiểm đệ thuỳ trước khi mã hoá.
+            if co_so_phi_huu_han(&args[0]) {
+                return Err(loi(
+                    "json.encode: giá trị số không hữu hạn (NaN/inf) không được mã hoá",
+                    span,
+                ));
+            }
             let mut s = String::new();
-            json(&args[0], false, &mut s);
-            Ok(Value::Str(s))
-        }
-        "json.encode_pretty" => {
-            let mut s = String::new();
-            json(&args[0], true, &mut s);
+            json(&args[0], name.ends_with("_pretty"), &mut s);
             Ok(Value::Str(s))
         }
         // ----- std.fs (ST-33) — **chỉ qua `Host`**, không OS trong crate này -----
@@ -439,6 +603,21 @@ pub fn call(host: &mut dyn Host, name: &str, args: Vec<Value>, span: Span) -> R<
                 // Mặc định 1 s — đủ rộng cho loopback, không treo chương trình.
                 1_000
             };
+            // ST-277/VD-256: đường frame có adapter thật ⇒ connect nonblocking. Handle
+            // `N:<addr>` chỉ là khoá core; adapter khởi tạo connect, đăng ký WRITABLE,
+            // và CHỈ trả tay khi readiness kèm kiểm tra kết quả nối thực tế (SO_ERROR).
+            // Deadline/token/gen/cleanup là của `frame_reactor_poll_io` (không đổi rt.rs).
+            if host.sched().borrow().frame.enabled && host.sched().borrow().frame.backend.is_some()
+            {
+                let khoa = format!("{FRAME_NET_CONNECT}{dia_chi}");
+                return host.sched().borrow_mut().frame_reactor_poll_io(
+                    ReactorOp::Read,
+                    &khoa,
+                    0,
+                    timeout,
+                    span,
+                );
+            }
             let host = host.net().ok_or_else(|| khong_host(name, span))?;
             let r = host.connect(dia_chi, timeout.max(0) as u64);
             hop_nhat_fs(r.map(Value::Str), span)
@@ -447,8 +626,30 @@ pub fn call(host: &mut dyn Host, name: &str, args: Vec<Value>, span: Span) -> R<
             let tay = chuoi(name, &args[0], 0, span)?;
             let toi_da = so(name, &args[1], 1, span)?;
             let timeout = so(name, &args[2], 2, span)?;
+            // ST-268/VD-252 (Lát 2): đường frame test dùng reactor giả — KHÔNG đọc socket
+            // thật, KHÔNG busy-poll. Runtime mặc định (frame.enabled == false) đi nguyên văn.
+            if host.sched().borrow().frame.enabled {
+                let n = match gioi_han_net_read(toi_da) {
+                    Ok(n) => n,
+                    Err(e) => return Ok(Value::err(Value::ban_ghi_error(e, None))),
+                };
+                let _ = n; // trần `NET_READ_CAP` đã kiểm; reactor giả không cấp phát byte.
+                return host.sched().borrow_mut().frame_reactor_poll_io(
+                    ReactorOp::Read,
+                    tay,
+                    n,
+                    timeout,
+                    span,
+                );
+            }
             let host = host.net().ok_or_else(|| khong_host(name, span))?;
-            let r = host.read(tay, toi_da.max(0) as usize, timeout.max(0) as u64);
+            // **ST-238 / VD-242 (nợ #167)**: `so()` đã chặn sai kiểu; ở đây chặn âm/overflow/cap
+            // trước khi host cấp phát. Mọi trường hợp invalid ⇒ `Result.Err`, không abort.
+            let n = match gioi_han_net_read(toi_da) {
+                Ok(n) => n,
+                Err(e) => return Ok(Value::err(Value::ban_ghi_error(e, None))),
+            };
+            let r = host.read(tay, n, timeout.max(0) as u64);
             // Body là **byte**; ngôn ngữ chỉ có `str` ⇒ giải mã **lossy** (không cắt giữa ký tự).
             // `Ok(vec![])` = EOF ⇒ `""` (không phải lỗi). Nợ: API byte thật cho tới khi có `buf`.
             hop_nhat_fs(
@@ -459,11 +660,42 @@ pub fn call(host: &mut dyn Host, name: &str, args: Vec<Value>, span: Span) -> R<
         "net.write" => {
             let tay = chuoi(name, &args[0], 0, span)?;
             let du = chuoi(name, &args[1], 1, span)?;
+            // ST-277/VD-256: đường frame có adapter thật ⇒ partial-write có offset.
+            // Resume gọi lại builtin với ĐỐI SỐ ĐÃ CACHE (xem `Redispatch`/`frame.rs`),
+            // nên bytes được ghi lại đúng từ registry/offset của adapter — KHÔNG gửi lại
+            // phần đã gửi. Hạn write là một deadline monotonic duy nhất, không reset.
+            if host.sched().borrow().frame.enabled && host.sched().borrow().frame.backend.is_some()
+            {
+                let khoa = format!("{FRAME_NET_WRITE}{tay}");
+                frame_net_set_write(&khoa, du.as_bytes());
+                let han = frame_net_write_timeout();
+                let r = host.sched().borrow_mut().frame_reactor_poll_io(
+                    ReactorOp::Read,
+                    &khoa,
+                    du.len(),
+                    han,
+                    span,
+                );
+                frame_net_take_write(&khoa); // dọn phần adapter chưa kịp take
+                return r.map(frame_unit_result);
+            }
             let host = host.net().ok_or_else(|| khong_host(name, span))?;
             hop_nhat_fs(host.write(tay, du.as_bytes()).map(|()| Value::Unit), span)
         }
         "net.close" => {
             let tay = chuoi(name, &args[0], 0, span)?;
+            // Lát 3: trên đường frame có adapter thật ⇒ đóng socket + vô hiệu mọi
+            // đăng ký/stale event của tay này, không cần host mạng mặc định.
+            let backend = host.sched().borrow().frame.backend.clone();
+            if let Some(b) = backend {
+                host.sched().borrow_mut().frame_reactor_cancel_handle(tay);
+                // ST-277: một `net.write` đang treo đăng ký dưới khoá `W:<tay>` — phải
+                // huỷ cả khoá đó thì lần retry mới thấy tay đã đóng (Err đúng một lần),
+                // không đợi tới deadline rồi trả timeout muộn.
+                let wk = format!("{FRAME_NET_WRITE}{tay}");
+                host.sched().borrow_mut().frame_reactor_cancel_handle(&wk);
+                return hop_nhat_fs(b.borrow_mut().close(tay).map(|()| Value::Unit), span);
+            }
             let host = host.net().ok_or_else(|| khong_host(name, span))?;
             hop_nhat_fs(host.close(tay).map(|()| Value::Unit), span)
         }
@@ -486,6 +718,16 @@ pub fn call(host: &mut dyn Host, name: &str, args: Vec<Value>, span: Span) -> R<
             } else {
                 0
             };
+            // ST-268/VD-252 (Lát 2): accept trên đường frame test = reactor giả.
+            if host.sched().borrow().frame.enabled {
+                return host.sched().borrow_mut().frame_reactor_poll_io(
+                    ReactorOp::Accept,
+                    tay,
+                    0,
+                    timeout,
+                    span,
+                );
+            }
             let host = host.net().ok_or_else(|| khong_host(name, span))?;
             hop_nhat_fs(
                 host.accept(tay, timeout.max(0) as u64).map(Value::Str),
@@ -534,6 +776,80 @@ pub fn call(host: &mut dyn Host, name: &str, args: Vec<Value>, span: Span) -> R<
             });
             hop_nhat_fs(kq, span)
         }
+        // ----- std.sqlite (VD-241, Gate 1) — **chỉ qua `Host::db`**, không backend trong crate này.
+        // Thiếu host ⇒ `VS0604`; mọi lỗi host (handle/SQL/params/giới hạn/authorizer/timeout/lỗi
+        // SQLite) ⇒ `Err(Error)` dữ liệu (VD-241 pre-merge §1). -----
+        "sqlite.open" => {
+            let p = chuoi(name, &args[0], 0, span)?;
+            let host = host.db().ok_or_else(|| khong_host(name, span))?;
+            // Mặc định `create = true` (A0 I); busy mặc định 5 s (hữu hạn ≤ 60 s host kẹp).
+            hop_nhat_fs(host.db_open(p, true, 5_000).map(Value::Str), span)
+        }
+        "sqlite.open_with" => {
+            let p = chuoi(name, &args[0], 0, span)?;
+            let Value::Bool(create) = &args[1] else {
+                return Err(loi(
+                    format!("`{name}`: đối số 2 cần `bool`, được `{}`", args[1].show()),
+                    span,
+                ));
+            };
+            let busy = so(name, &args[2], 2, span)?;
+            let create = *create;
+            let host = host.db().ok_or_else(|| khong_host(name, span))?;
+            hop_nhat_fs(host.db_open(p, create, busy).map(Value::Str), span)
+        }
+        "sqlite.close" => {
+            let h = chuoi(name, &args[0], 0, span)?;
+            let host = host.db().ok_or_else(|| khong_host(name, span))?;
+            hop_nhat_fs(host.db_close(h).map(|()| Value::Unit), span)
+        }
+        "sqlite.execute" => {
+            let h = chuoi(name, &args[0], 0, span)?;
+            let sql = chuoi(name, &args[1], 1, span)?;
+            let params = danh_sach(name, &args[2], 2, span)?;
+            let host = host.db().ok_or_else(|| khong_host(name, span))?;
+            hop_nhat_fs(host.db_execute(h, sql, params).map(Value::Int), span)
+        }
+        "sqlite.query" => {
+            let h = chuoi(name, &args[0], 0, span)?;
+            let sql = chuoi(name, &args[1], 1, span)?;
+            let params = danh_sach(name, &args[2], 2, span)?;
+            let host = host.db().ok_or_else(|| khong_host(name, span))?;
+            match host.db_query(h, sql, params) {
+                Ok((columns, rows)) => {
+                    let columns = Value::List(columns.into_iter().map(Value::Str).collect());
+                    let rows = Value::List(rows.into_iter().map(Value::List).collect());
+                    Ok(Value::ok(Value::Record(
+                        "RowSet".into(),
+                        vec![("columns".into(), columns), ("rows".into(), rows)],
+                    )))
+                }
+                Err(e) => hop_nhat_fs(Err(e), span),
+            }
+        }
+        "sqlite.begin" => {
+            let h = chuoi(name, &args[0], 0, span)?;
+            let host = host.db().ok_or_else(|| khong_host(name, span))?;
+            hop_nhat_fs(host.db_execute(h, "BEGIN", &[]).map(|_| Value::Unit), span)
+        }
+        "sqlite.commit" => {
+            let h = chuoi(name, &args[0], 0, span)?;
+            let host = host.db().ok_or_else(|| khong_host(name, span))?;
+            hop_nhat_fs(host.db_execute(h, "COMMIT", &[]).map(|_| Value::Unit), span)
+        }
+        "sqlite.rollback" => {
+            let h = chuoi(name, &args[0], 0, span)?;
+            let host = host.db().ok_or_else(|| khong_host(name, span))?;
+            hop_nhat_fs(
+                host.db_execute(h, "ROLLBACK", &[]).map(|_| Value::Unit),
+                span,
+            )
+        }
+        "sqlite.in_transaction" => {
+            let h = chuoi(name, &args[0], 0, span)?;
+            let host = host.db().ok_or_else(|| khong_host(name, span))?;
+            hop_nhat_fs(host.db_in_transaction(h).map(Value::Bool), span)
+        }
         other => Err(loi(
             format!("`std.{other}` chưa cài (bảng chữ ký có nhưng tầng chạy thiếu)"),
             span,
@@ -541,10 +857,86 @@ pub fn call(host: &mut dyn Host, name: &str, args: Vec<Value>, span: Span) -> R<
     }
 }
 
+/// **ST-238 / VD-242 (nợ #169)**: `true` nếu cây giá trị chứa số `Float`/`Percent` không hữu hạn.
+/// Đi cấu trúc `Value` thuần, không gọi mã người dùng.
+fn co_so_phi_huu_han(v: &Value) -> bool {
+    match v {
+        Value::Float(f) | Value::Percent(f) => !f.is_finite(),
+        Value::List(xs) => xs.iter().any(co_so_phi_huu_han),
+        Value::Map(kv) => kv
+            .iter()
+            .any(|(k, val)| co_so_phi_huu_han(k) || co_so_phi_huu_han(val)),
+        Value::Record(_, fs) => fs.iter().any(|(_, x)| co_so_phi_huu_han(x)),
+        Value::Enum(_, _, args) => args.iter().any(co_so_phi_huu_han),
+        _ => false,
+    }
+}
+
+/// **ST-240 / VD-242 §3.5 (nợ #175)**: JSON cấm số có số `0` đầu (`01`, `-01`, `00`). Tầng
+/// `crate::json::decode` dùng `str::parse::<i64>()` nên vẫn nhận các token đó; chặn ở **cửa
+/// `std.json.decode`** (không đụng tầng parse dùng chung với LSP/CLI). Quét theo token số, bỏ qua
+/// nội dung chuỗi (kể cả escape) để không đụng `"01"` hợp lệ. Trả byte offset của token sai.
+fn json_zero_dau(s: &str) -> Option<usize> {
+    let b = s.as_bytes();
+    let mut i = 0usize;
+    let mut trong_chuoi = false;
+    let mut escape = false;
+    while i < b.len() {
+        if trong_chuoi {
+            if escape {
+                escape = false;
+            } else if b[i] == b'\\' {
+                escape = true;
+            } else if b[i] == b'"' {
+                trong_chuoi = false;
+            }
+            i += 1;
+            continue;
+        }
+        match b[i] {
+            b'"' => {
+                trong_chuoi = true;
+                i += 1;
+            }
+            c if c == b'-' || c.is_ascii_digit() => {
+                let bat_dau = i;
+                if c == b'-' {
+                    i += 1;
+                }
+                // `0` theo sau bởi chữ số ⇒ phần nguyên có số 0 đầu (JSON không hợp lệ).
+                if b.get(i) == Some(&b'0') && i + 1 < b.len() && b[i + 1].is_ascii_digit() {
+                    return Some(bat_dau);
+                }
+                // Tiêu thụ **toàn bộ** token số — `100` (hai số 0 cuối) phải hợp lệ.
+                while i < b.len() && matches!(b[i], b'0'..=b'9' | b'.' | b'e' | b'E' | b'+' | b'-')
+                {
+                    i += 1;
+                }
+            }
+            _ => i += 1,
+        }
+    }
+    None
+}
+
+/// **ST-240 / VD-242 §3.5 (nợ #173)**: giữ dấu float trong JSON. `format!("{}", 1.0_f64)` cho
+/// `"1"`, decoder sẽ đọc thành `Int`; thêm `.0` khi chuỗi in ra không có dấu thập phân/mũ.
+fn json_float(f: f64) -> String {
+    let s = format!("{f}");
+    if s.contains('.') || s.contains('e') || s.contains('E') {
+        s
+    } else {
+        format!("{s}.0")
+    }
+}
+
 /// Mã hoá JSON **compact** (hoặc pretty 2 dấu cách) cho giá trị VS0.
 ///
 /// Quy ước: `map` theo **thứ tự chèn**; bản ghi theo thứ tự trường; `None` ⇒ `null`; `Result` ⇒
 /// `{"ok":…}`/`{"err":…}`; enum ⇒ `{"variant":…, "value":…}`. Khoá chuỗi được escape.
+///
+/// **Lưu ý**: `Float` không hữu hạn vẫn in `null` ở hàm thấp-level này (dùng cho LSP/CLI); cửa
+/// `std.json.encode` chặn riêng ở trên theo VD-242 Q4b.
 pub fn json(v: &Value, pretty: bool, out: &mut String) {
     json_tai(v, pretty, 0, out);
 }
@@ -591,13 +983,20 @@ fn json_tai(v: &Value, pretty: bool, depth: usize, out: &mut String) {
         Value::Int(n) => out.push_str(&n.to_string()),
         Value::Float(f) => {
             if f.is_finite() {
-                out.push_str(&format!("{f}"))
+                out.push_str(&json_float(*f))
             } else {
                 out.push_str("null")
             }
         }
         Value::Size(n) | Value::Duration(n) => out.push_str(&n.to_string()),
-        Value::Percent(p) => out.push_str(&format!("{p}")),
+        // `percent` lưu dưới dạng `f64` ⇒ cùng quy ước giữ dấu float (#173).
+        Value::Percent(p) => {
+            if p.is_finite() {
+                out.push_str(&json_float(*p))
+            } else {
+                out.push_str("null")
+            }
+        }
         Value::Str(s) | Value::Path(s) => esc(s, out),
         Value::Char(c) => esc(&c.to_string(), out),
         Value::Bytes(b) => esc(&String::from_utf8_lossy(b), out),
@@ -633,6 +1032,31 @@ fn json_tai(v: &Value, pretty: bool, depth: usize, out: &mut String) {
             if !kv.is_empty() {
                 dong(pretty, depth, out);
             }
+            out.push('}');
+        }
+        // Bản ghi `Error` dựng sẵn (VD-222 điểm 4): in JSON `{"message": …, …}`.
+        Value::Record(name, fs) if name == "Error" => {
+            let trong: std::collections::BTreeMap<&str, &Value> =
+                fs.iter().map(|(n, v)| (n.as_str(), v)).collect();
+            out.push('{');
+            mo(pretty, depth, out);
+            esc("message", out);
+            out.push_str(if pretty { ": " } else { ":" });
+            match trong.get("message") {
+                Some(Value::Str(t)) => esc(t, out),
+                Some(other) => json_tai(other, pretty, depth + 1, out),
+                None => out.push_str("\"\""),
+            }
+            for extra in ["source", "span"] {
+                if let Some(v) = trong.get(extra) {
+                    out.push(',');
+                    mo(pretty, depth, out);
+                    esc(extra, out);
+                    out.push_str(if pretty { ": " } else { ":" });
+                    json_tai(v, pretty, depth + 1, out);
+                }
+            }
+            dong(pretty, depth, out);
             out.push('}');
         }
         Value::Record(_, fs) => {
@@ -675,6 +1099,78 @@ fn json_tai(v: &Value, pretty: bool, depth: usize, out: &mut String) {
             dong(pretty, depth, out);
             out.push('}');
         }
+        // **VD-222 (điểm 4)** — `Json` enum thật: in đúng JSON cho cả 6 biến thể.
+        Value::Enum(ea, va, ag) if ea == "Json" => match va.as_str() {
+            "Null" => out.push_str("null"),
+            "Bool" => {
+                if matches!(ag.first(), Some(Value::Bool(true))) {
+                    out.push_str("true");
+                } else {
+                    out.push_str("false");
+                }
+            }
+            "Num" => match ag.first() {
+                Some(Value::Int(n)) => out.push_str(&n.to_string()),
+                Some(Value::Float(f)) => {
+                    if f.is_finite() {
+                        out.push_str(&format!("{f}"));
+                    } else {
+                        out.push_str("null");
+                    }
+                }
+                _ => out.push_str("null"),
+            },
+            "Str" => {
+                if let Some(Value::Str(t)) = ag.first() {
+                    esc(t, out);
+                } else {
+                    out.push_str("\"\"");
+                }
+            }
+            "Arr" => {
+                if let Some(Value::List(xs)) = ag.first() {
+                    out.push('[');
+                    for (i, x) in xs.iter().enumerate() {
+                        if i > 0 {
+                            out.push(',');
+                        }
+                        mo(pretty, depth, out);
+                        json_tai(x, pretty, depth + 1, out);
+                    }
+                    if !xs.is_empty() {
+                        dong(pretty, depth, out);
+                    }
+                    out.push(']');
+                } else {
+                    out.push_str("[]");
+                }
+            }
+            "Obj" => {
+                if let Some(Value::Map(kv)) = ag.first() {
+                    out.push('{');
+                    for (i, (k, val)) in kv.iter().enumerate() {
+                        if i > 0 {
+                            out.push(',');
+                        }
+                        mo(pretty, depth, out);
+                        let kk = match k {
+                            Value::Str(t) | Value::Path(t) => t.clone(),
+                            other => other.show(),
+                        };
+                        esc(&kk, out);
+                        out.push_str(if pretty { ": " } else { ":" });
+                        json_tai(val, pretty, depth + 1, out);
+                    }
+                    if !kv.is_empty() {
+                        dong(pretty, depth, out);
+                    }
+                    out.push('}');
+                } else {
+                    out.push_str("{}");
+                }
+            }
+            _ => out.push_str("null"),
+        },
         Value::Enum(_, var, args) => {
             out.push('{');
             mo(pretty, depth, out);
@@ -731,15 +1227,33 @@ fn noi_duong(a: &str, b: &str) -> String {
 }
 
 fn basename(p: &str) -> String {
-    let p = p.trim_end_matches('/');
-    match p.rsplit_once('/') {
-        Some((_, ten)) => ten.to_string(),
-        None => p.to_string(),
+    let trimmed = p.trim_end_matches('/');
+    // **ST-240 / VD-242 §4 (nợ #174)**: POSIX — gốc `/` (và `//`, `///`, …) có basename `/`.
+    // Trước đây `trim_end_matches('/')` biến nó thành `""`. Chuỗi rỗng vẫn trả rỗng.
+    if trimmed.is_empty() {
+        return if p.is_empty() {
+            String::new()
+        } else {
+            "/".to_string()
+        };
+    }
+    match trimmed.rsplit_once('/') {
+        Some((_, ten)) if !ten.is_empty() => ten.to_string(),
+        _ => trimmed.to_string(),
     }
 }
 
 fn dirname(p: &str) -> String {
     let p2 = p.trim_end_matches('/');
+    // **ST-240 / VD-242 §4 (nợ #174)**: `dirname("/") == "/"` (không phải `.`). Chuỗi rỗng
+    // giữ hành vi cũ (`.`).
+    if p2.is_empty() {
+        return if p.is_empty() {
+            ".".to_string()
+        } else {
+            "/".to_string()
+        };
+    }
     match p2.rsplit_once('/') {
         Some((d, _)) => {
             if d.is_empty() {
@@ -765,5 +1279,39 @@ fn stem(p: &str) -> String {
     match ten.rsplit_once('.') {
         Some((s, e)) if !e.is_empty() && !ten.starts_with('.') => s.to_string(),
         _ => ten,
+    }
+}
+
+#[cfg(test)]
+mod st238_tests {
+    use super::*;
+
+    #[test]
+    fn net_read_ky_so_vao_khong_duoc_cap_phat() {
+        assert!(gioi_han_net_read(-1).is_err(), "âm bị từ chối");
+        assert!(gioi_han_net_read(i64::MAX).is_err(), "i64::MAX bị từ chối");
+        assert!(
+            gioi_han_net_read(NET_READ_CAP + 1).is_err(),
+            "vượt trần bị từ chối"
+        );
+        assert_eq!(
+            gioi_han_net_read(NET_READ_CAP).unwrap(),
+            NET_READ_CAP as usize
+        );
+        assert_eq!(gioi_han_net_read(0).unwrap(), 0);
+        assert_eq!(gioi_han_net_read(1024).unwrap(), 1024);
+    }
+
+    #[test]
+    fn json_non_finite_bi_phat_hien() {
+        assert!(co_so_phi_huu_han(&Value::Float(f64::NAN)));
+        assert!(co_so_phi_huu_han(&Value::Float(f64::INFINITY)));
+        assert!(co_so_phi_huu_han(&Value::Percent(f64::NEG_INFINITY)));
+        assert!(co_so_phi_huu_han(&Value::List(vec![
+            Value::Int(1),
+            Value::Float(f64::NAN)
+        ])));
+        assert!(!co_so_phi_huu_han(&Value::Float(1.5)));
+        assert!(!co_so_phi_huu_han(&Value::Int(1)));
     }
 }

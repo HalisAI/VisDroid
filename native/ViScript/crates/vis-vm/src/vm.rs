@@ -5,7 +5,12 @@
 //! khung tách riêng để `return` lồng nhau sạch; iterator của `for` nằm ở `iters` (không lẫn với
 //! ngăn xếp giá trị).
 
-use vis_bytecode::{Func, Instr, Module};
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::rc::Rc;
+
+use vis_bytecode::fee::{FeeEntry, FeeTable};
+use vis_bytecode::{Func, Instr, Module, BI_MATCH_NO_ARM, GLOBAL_SLOT_BASE};
 use vis_interp::builtin::{self, Host};
 use vis_interp::interp::{Abort, Trap, IDX, R, RT};
 use vis_interp::value::{self, Value, VmFunc};
@@ -51,11 +56,12 @@ pub fn run_with_hosts_caps<'a>(
     net: Option<&'a mut dyn vis_interp::builtin::NetHost>,
     caps: &[(u32, Value)],
 ) -> RunOutput {
-    run_with_full_hosts_caps(m, text, args, None, fs, net, caps)
+    run_with_full_hosts_caps(m, text, args, None, fs, net, None, caps)
 }
 
 /// **ST-89 (VD-110)**: như [`run_with_hosts_caps`] nhưng nhận **cả** host chương trình ngoài — cùng
 /// trait `vis_interp::builtin::Ngoai` mà interp dùng; VM **không** gọi `std::process`.
+/// **VD-241 (Gate 1)**: nhận thêm **host cơ sở dữ liệu** (`None` ⇒ `std.sqlite.*` ⇒ `VS0604`).
 #[allow(clippy::too_many_arguments)]
 pub fn run_with_full_hosts_caps<'a>(
     m: &'a Module,
@@ -64,6 +70,7 @@ pub fn run_with_full_hosts_caps<'a>(
     ngoai: Option<&'a mut dyn vis_interp::builtin::Ngoai>,
     fs: Option<&'a mut dyn vis_interp::builtin::FsHost>,
     net: Option<&'a mut dyn vis_interp::builtin::NetHost>,
+    db: Option<&'a mut dyn vis_interp::builtin::DbHost>,
     caps: &[(u32, Value)],
 ) -> RunOutput {
     let mut vm = Vm::new(m, text);
@@ -76,6 +83,9 @@ pub fn run_with_full_hosts_caps<'a>(
     if let Some(g) = net {
         vm.set_net(g);
     }
+    if let Some(d) = db {
+        vm.set_db(d);
+    }
     if !caps.is_empty() {
         vm.caps = caps.to_vec();
     }
@@ -84,59 +94,77 @@ pub fn run_with_full_hosts_caps<'a>(
 
 /// Cap số khung gọi lồng nhau (VD-49).
 pub const MAX_FRAMES: usize = 2_000;
-/// Cap số **lệnh** đã thực thi — cùng ngưỡng 10^7 với interp (khác đơn vị đếm).
-pub const MAX_STEPS: usize = 10_000_000;
+/// **VD-256 D8/D9** — fuel an toàn **chỉ của VM**: không phải ngân sách ngữ nghĩa, không che
+/// verifier (chạy trước ở [`Vm::run`]); ngưỡng giữ 10^7, chẩn đoán riêng [`SAFETY_FUEL_CODE`].
+pub const SAFETY_FUEL: usize = 10_000_000;
+pub const MAX_STEPS: usize = SAFETY_FUEL;
 
-/// Lỗi của VM khi bytecode hỏng — **không** panic.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum VmError {
-    /// `pop` trên ngăn xếp rỗng.
-    StackUnderflow,
-    /// Đích nhảy ngoài `code`.
-    BadJump(i32),
-    /// Chỉ số const/hàm ngoài phạm vi.
-    BadIdx(u32),
-}
+pub use crate::vm_frame::{VmError, SAFETY_FUEL_CODE};
+mod vm_helpers;
+use vm_helpers::*;
 
-impl core::fmt::Display for VmError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            VmError::StackUnderflow => write!(f, "ngăn xếp rỗng"),
-            VmError::BadJump(d) => write!(f, "đích nhảy ngoài code: {d}"),
-            VmError::BadIdx(i) => write!(f, "chỉ số ngoài phạm vi: {i}"),
-        }
-    }
-}
+/// **ST-238 (VD-242, ca 8)**: ô chia sẻ của closure và cặp `(ô cục bộ mirror, chỉ số ô bắt)`.
+type ClosureCells = Rc<RefCell<Vec<Value>>>;
+type CapturedMirror = Vec<(u16, usize)>;
 
-struct Frame {
-    fi: u32,
-    pc: usize,
-    locals: Vec<Value>,
-    captured: Vec<Value>,
+pub(crate) struct Frame {
+    pub(crate) fi: u32,
+    pub(crate) pc: usize,
+    pub(crate) locals: Vec<Value>,
+    pub(crate) captured: Vec<Value>,
     /// Ngăn xếp **của khung gọi** được cất khi gọi hàm (mỗi khung một ngăn xếp riêng).
-    st_cu: Vec<Value>,
+    pub(crate) st_cu: Vec<Value>,
+    /// **ST-238 (VD-242, ca 8)**: nếu khung là một lần gọi closure, chứa ô chia sẻ của closure
+    /// và cặp `(ô cục bộ, chỉ số biến bắt)` để ghi ngược giá trị khi khung kết thúc — giúp closure
+    /// ghi biến bắt `var` giữ trạng thái **giữa các lần gọi** mà vẫn không đụng biến ngoài.
+    pub(crate) writeback: Option<(ClosureCells, CapturedMirror)>,
 }
 
 /// Máy ảo: giữ module + văn bản nguồn + `stdout` + số bước.
 pub struct Vm<'a> {
-    m: &'a Module,
-    text: &'a str,
-    out: String,
-    steps: usize,
-    depth: usize,
+    pub(crate) m: &'a Module,
+    pub(crate) text: &'a str,
+    pub(crate) out: String,
+    pub(crate) steps: usize,
+    pub(crate) depth: usize,
     /// Độ sâu ngăn xếp giá trị **lớn nhất đã dùng** (bất biến của fuzz ST-21).
-    dinh: usize,
+    pub(crate) dinh: usize,
     /// Host hệ thống tệp (ST-33); `None` ⇒ `VS0604` — VM **không** biết `std::fs`.
-    fs: Option<&'a mut dyn vis_interp::builtin::FsHost>,
+    pub(crate) fs: Option<&'a mut dyn vis_interp::builtin::FsHost>,
     /// **ST-63 (VD-105)**: host mạng; `None` ⇒ `VS0604` — VM **không** biết `std::net`.
-    net: Option<&'a mut dyn vis_interp::builtin::NetHost>,
+    pub(crate) net: Option<&'a mut dyn vis_interp::builtin::NetHost>,
     /// **ST-89 (VD-110)**: host **chương trình ngoài** — VM **không** gọi `std::process`, chỉ qua
     /// trait của `vis-interp`; `None` ⇒ `exec.*` ⇒ `VS0604`.
-    ngoai: Option<&'a mut dyn vis_interp::builtin::Ngoai>,
+    pub(crate) ngoai: Option<&'a mut dyn vis_interp::builtin::Ngoai>,
+    /// **VD-241 (Gate 1)**: host **cơ sở dữ liệu** — VM **không** biết backend native; `None` ⇒
+    /// `std.sqlite.*` ⇒ `VS0604`.
+    pub(crate) db: Option<&'a mut dyn vis_interp::builtin::DbHost>,
     /// **ST-60**: hàng đợi tác vụ `async` — cùng runtime với interp (`vis_interp::rt`).
-    sched: std::cell::RefCell<vis_interp::rt::Scheduler>,
+    pub(crate) sched: std::cell::RefCell<vis_interp::rt::Scheduler>,
     /// **ST-72b (VD-103/VD-106)**: quyền `main` — `(chỉ số tham số, giá trị)`.
-    caps: Vec<(u32, Value)>,
+    pub(crate) caps: Vec<(u32, Value)>,
+    /// **ST-238 (VD-242, ca 3)**: kho biến cấp tệp, ánh xạ từ ô `>= GLOBAL_SLOT_BASE`.
+    ///
+    /// **ST-250 (VD-245)**: mỗi ô là `Option<Value>` — `None` = **chưa khởi tạo**, `Some(v)` = đã
+    /// ghi (kể cả `v == Value::Unit`). Trạng thái khởi tạo được tách khỏi giá trị ngôn ngữ: `Unit`
+    /// hợp lệ không bao giờ bị nhầm với ô chưa có giá trị, và sentinel `None` không lọt vào
+    /// `Value`/`show`/phép toán/serialization. Độ dài được cấp **theo module đã verify** ở đầu mỗi
+    /// lần chạy, không tự resize theo chỉ số bytecode trong lúc chạy.
+    pub(crate) globals: Vec<Option<Value>>,
+    /// **ST-238 (VD-242, ca 8)**: ô chia sẻ của từng closure, khoá bằng địa chỉ `Rc<VmFunc>`.
+    pub(crate) closure_cells: HashMap<usize, ClosureCells>,
+    // ST-276/VD-256 — test-hook ngân sách; `None` ⇒ KHÔNG charge (mặc định).
+    pub(crate) budget_fee: Option<FeeTable>,
+    pub(crate) budget_remaining: i64,
+    pub(crate) budget_trace: Vec<FeeEntry>,
+    pub(crate) budget_hit: bool,
+    // VD-257/D — hạn ngạch lượt THỬ NGHIỆM (test-hook), RIÊNG khỏi budget tổng.
+    // `quota_active = false` (mặc định) ⇒ mọi thao tác quota là no-op.
+    pub(crate) quota_active: bool,
+    pub(crate) quota_limit: i64,
+    pub(crate) quota_remaining: i64,
+    pub(crate) quota_hit: bool,
+    pub(crate) quota_yields: u64,
 }
 
 impl<'a> Vm<'a> {
@@ -151,9 +179,21 @@ impl<'a> Vm<'a> {
             dinh: 0,
             fs: None,
             net: None,
+            db: None,
             ngoai: None,
             sched: std::cell::RefCell::new(vis_interp::rt::Scheduler::new()),
             caps: Vec::new(),
+            globals: Vec::new(),
+            closure_cells: HashMap::new(),
+            budget_fee: None,
+            budget_remaining: 0,
+            budget_trace: Vec::new(),
+            budget_hit: false,
+            quota_active: false,
+            quota_limit: 0,
+            quota_remaining: 0,
+            quota_hit: false,
+            quota_yields: 0,
         }
     }
 
@@ -185,6 +225,11 @@ impl<'a> Vm<'a> {
                 steps: 0,
             };
         }
+        self.steps = 0; // VD-256 D8: fuel reset mỗi lần chạy, không cộng dồn.
+                        // **ST-250 (VD-245)**: reset + cấp phát kho global **theo module** ở đầu mỗi lần chạy.
+                        // Mọi ô bắt đầu `None` (chưa khởi tạo) — lần chạy trước không thể che lỗi lần sau, và kích
+                        // thước bị chặn bởi miền đã verify (không grow không giới hạn theo chỉ số bytecode).
+        self.init_globals();
         let argv = Value::List(args.iter().map(|s| Value::Str(s.clone())).collect());
         // **ST-60 (VD-90/VD-95)**: join mọi tác vụ **theo thứ tự tạo**, **chỉ khi main thành công**
         // (và **trước** `take_stdout` ⇒ thân tác vụ in vẫn vào stdout, đúng thứ tự).
@@ -213,11 +258,23 @@ impl<'a> Vm<'a> {
                 exit: 1,
                 steps: self.steps,
             },
-            Err(Abort::Ret(v)) => RunOutput {
+            Err(Abort::Ret(v)) => {
+                // **VD-241 §3/T5 (A0, 2026-11-19)** — `Result::Err` ⇒ exit 1; dùng chung `value::exit_code`.
+                let exit = value::exit_code(&v);
+                RunOutput {
+                    stdout: self.take_stdout(),
+                    diagnostics: Vec::new(),
+                    value: Some(v),
+                    exit,
+                    steps: self.steps,
+                }
+            }
+            // Chỉ đường test/frame — `run()` mặc định không bật frame; driver có entry riêng.
+            Err(Abort::Pending(_)) => RunOutput {
                 stdout: self.take_stdout(),
                 diagnostics: Vec::new(),
-                value: Some(v),
-                exit: 0,
+                value: None,
+                exit: 1,
                 steps: self.steps,
             },
         }
@@ -277,11 +334,98 @@ impl<'a> Vm<'a> {
         Ok(v)
     }
 
-    fn func(&self, i: u32) -> R<&Func> {
+    pub(crate) fn func(&self, i: u32) -> R<&Func> {
         self.m
             .funcs
             .get(i as usize)
             .ok_or_else(|| self.hong(VmError::BadIdx(i), Span::new(0, 0)))
+    }
+
+    /// **ST-250 (VD-245)**: đặt lại kho global cho **một lần chạy** — mọi ô `None` (chưa khởi tạo).
+    ///
+    /// Kích thước lấy từ chính module đã verify: `1 + max(s - GLOBAL_SLOT_BASE)` trên mọi lệnh ghi
+    /// vùng global. Vì `verify()` đã chặn `s - BASE >= nglobals`, số ô này bị giới hạn bởi số global
+    /// thật của module; VM **không** resize bộ nhớ theo một chỉ số bytecode tùy ý lúc chạy.
+    pub(crate) fn init_globals(&mut self) {
+        let mut n = 0usize;
+        for f in &self.m.funcs {
+            for ins in &f.code {
+                let off = match *ins {
+                    Instr::StoreLocal(s) | Instr::Assign(s) | Instr::BindLocal(s)
+                        if s >= GLOBAL_SLOT_BASE =>
+                    {
+                        s - GLOBAL_SLOT_BASE
+                    }
+                    _ => continue,
+                };
+                n = n.max(off as usize + 1);
+            }
+        }
+        self.globals = vec![None; n];
+    }
+
+    /// **ST-250 (VD-245)**: **mọi đường đọc global** đi qua đây — ô được ghi (`Some(v)`, kể cả
+    /// `v == Unit`) mới trả giá trị; còn lại (chưa khởi tạo, kể cả ô ngoài kho hiện tại) ⇒ trap
+    /// có chẩn đoán, không trả giá trị mặc định. Dùng mã runtime hiện hành `RT` (`VS0501`), không
+    /// thêm mã chẩn đoán mới.
+    fn doc_global(&self, k: usize, span: Span) -> R<Value> {
+        match self.globals.get(k) {
+            Some(Some(v)) => Ok(v.clone()),
+            _ => Err(Abort::Trap(Trap::new(
+                RT,
+                format!(
+                    "global chưa được khởi tạo tại ô {} (chỉ số bytecode {})",
+                    k,
+                    k + GLOBAL_SLOT_BASE as usize
+                ),
+                span,
+            ))),
+        }
+    }
+
+    /// **ST-252 (VD-246)**: mọi đường đọc ô cục bộ (non-global) đi qua đây — chỉ số phải nằm
+    /// trong **khung thực tế**, nếu không trap có chẩn đoán bằng mã runtime hiện hành (`RT`),
+    /// không trả `Value::Unit` mặc định. `Unit` là giá trị **hợp lệ** đã được khởi tạo sẵn ở dựng
+    /// khung, nên một ô trong khung chứa `Unit` vẫn trả `Unit` bình thường (không nhầm với lỗi).
+    fn doc_local(&self, locals: &[Value], i: u16, span: Span) -> R<Value> {
+        locals.get(i as usize).cloned().ok_or_else(|| {
+            Abort::Trap(Trap::new(
+                RT,
+                format!("biến cục bộ {i} ngoài khung ({} ô)", locals.len()),
+                span,
+            ))
+        })
+    }
+
+    /// **ST-252 (VD-246)**: mọi đường đọc biến bắt đi qua đây — chỉ số phải nằm trong **môi
+    /// trường capture thực tế** của khung, nếu không trap có chẩn đoán (`RT`). Capture chứa `Unit`
+    /// là hợp lệ ⇒ trả `Unit` bình thường; chỉ có truy cập ngoài miền mới là lỗi.
+    fn doc_captured(&self, captured: &[Value], i: u16, span: Span) -> R<Value> {
+        captured.get(i as usize).cloned().ok_or_else(|| {
+            Abort::Trap(Trap::new(
+                RT,
+                format!(
+                    "biến bắt {i} ngoài môi trường capture ({} ô)",
+                    captured.len()
+                ),
+                span,
+            ))
+        })
+    }
+
+    /// **ST-252 (VD-246)**: ghi ô cục bộ có kiểm tra — chỉ số ngoài khung ⇒ trap, **không**
+    /// `resize` khung (cùng bản chất với đọc fallback: ô ngoài miền không được âm thầm mở rộng).
+    fn ghi_local(&self, locals: &mut [Value], i: u16, v: Value, span: Span) -> R<()> {
+        let n = locals.len();
+        let slot = locals.get_mut(i as usize).ok_or_else(|| {
+            Abort::Trap(Trap::new(
+                RT,
+                format!("ghi biến cục bộ {i} ngoài khung ({n} ô)"),
+                span,
+            ))
+        })?;
+        *slot = v;
+        Ok(())
     }
 
     fn hong(&self, e: VmError, span: Span) -> Abort {
@@ -327,6 +471,11 @@ impl<'a> Vm<'a> {
         self.net = Some(n);
     }
 
+    /// **VD-241 (Gate 1)**: gắn host cơ sở dữ liệu — VM chỉ gọi qua trait, không biết native.
+    pub fn set_db(&mut self, d: &'a mut dyn vis_interp::builtin::DbHost) {
+        self.db = Some(d);
+    }
+
     /// **ST-89 (VD-110)**: gắn host chương trình ngoài — VM chỉ gọi qua trait, không chạm OS.
     pub fn set_ngoai(&mut self, n: &'a mut dyn vis_interp::builtin::Ngoai) {
         self.ngoai = Some(n);
@@ -349,6 +498,13 @@ impl Host for Vm<'_> {
         self.net
             .as_mut()
             .map(|n| &mut **n as &mut dyn vis_interp::builtin::NetHost)
+    }
+
+    /// **VD-241 (Gate 1)**: host cơ sở dữ liệu; `None` ⇒ `std.sqlite.*` ⇒ `VS0604`.
+    fn db(&mut self) -> Option<&mut dyn vis_interp::builtin::DbHost> {
+        self.db
+            .as_mut()
+            .map(|d| &mut **d as &mut dyn vis_interp::builtin::DbHost)
     }
 
     /// **ST-89 (VD-110)**: chương trình ngoài; `None` ⇒ `VS0604`.
@@ -384,10 +540,10 @@ impl Host for Vm<'_> {
 
     /// **ST-60**: handle của VM là **chỉ số hàm bytecode** — chạy bằng `goi_ham_bytecode`.
     fn goi_than(&mut self, fi: u32, args: Vec<Value>, span: Span) -> R<Value> {
-        let f = VmFunc {
+        let f = Rc::new(VmFunc {
             idx: fi,
             captured: Vec::new(),
-        };
+        });
         self.goi_ham_bytecode(&f, args, span)
     }
 
@@ -413,7 +569,7 @@ impl Host for Vm<'_> {
 }
 
 impl Vm<'_> {
-    fn goi_ham_bytecode(&mut self, f: &VmFunc, args: Vec<Value>, span: Span) -> R<Value> {
+    fn goi_ham_bytecode(&mut self, f: &Rc<VmFunc>, args: Vec<Value>, span: Span) -> R<Value> {
         if self.depth + 1 >= MAX_FRAMES {
             return Err(Abort::Trap(Trap::new(
                 RT,
@@ -421,14 +577,46 @@ impl Vm<'_> {
                 span,
             )));
         }
-        let fc = self.func(f.idx)?;
-        let mut locals = vec![Value::Unit; fc.nlocals.max(1) as usize];
+        let m = self.m;
+        let fc = m
+            .funcs
+            .get(f.idx as usize)
+            .ok_or_else(|| self.hong(VmError::BadIdx(f.idx), span))?;
+        let nlocals = fc.nlocals.max(1) as usize;
+        // **ST-238 (VD-242, ca 8)**: nhận diện prologue `LoadCaptured(i); Assign(slot)` — các ô
+        // cục bộ này là **mirror** của ô chia sẻ; khi khung kết thúc phải ghi ngược vào ô đó.
+        let mut mirror: Vec<(u16, usize)> = Vec::new();
+        let mut k = 0;
+        while k + 1 < fc.code.len() {
+            if let (Instr::LoadCaptured(i), Instr::Assign(slot)) = (fc.code[k], fc.code[k + 1]) {
+                mirror.push((slot, i as usize));
+                k += 2;
+            } else {
+                break;
+            }
+        }
+        let mut locals = vec![Value::Unit; nlocals];
         for (i, a) in args.into_iter().enumerate() {
             if i < locals.len() {
                 locals[i] = a;
             }
         }
-        let mut th = Th::new(self.m, f.idx, locals, f.captured.clone());
+        // **ST-238 (VD-242, ca 8)**: ô chia sẻ theo địa chỉ closure — giá trị khởi tạo lấy từ
+        // `MakeClosure` (hoặc từ `f.captured` nếu closure dựng sẵn không qua `MakeClosure`).
+        let ptr = Rc::as_ptr(f) as usize;
+        let cells = match self.closure_cells.get(&ptr) {
+            Some(c) => c.clone(),
+            None => {
+                let c = Rc::new(RefCell::new(f.captured.clone()));
+                self.closure_cells.insert(ptr, c.clone());
+                c
+            }
+        };
+        let captured = cells.borrow().clone();
+        let mut th = Th::new(m, f.idx, locals, captured);
+        if let Some(fr) = th.frames.first_mut() {
+            fr.writeback = Some((cells, mirror));
+        }
         self.depth += 1;
         let v = th.exec(self);
         self.depth -= 1;
@@ -437,15 +625,18 @@ impl Vm<'_> {
 }
 
 /// Trạng thái thực thi của **một** lần gọi (khung + ngăn xếp giá trị + iterator).
-struct Th<'m> {
-    m: &'m Module,
-    frames: Vec<Frame>,
-    st: Vec<Value>,
-    iters: Vec<(Vec<Value>, usize)>,
+pub(crate) struct Th<'m> {
+    pub(crate) m: &'m Module,
+    pub(crate) frames: Vec<Frame>,
+    pub(crate) st: Vec<Value>,
+    pub(crate) iters: Vec<(Vec<Value>, usize)>,
+    /// **ST-238 (VD-242, ca 1)**: `(fi, pc_kết_thúc, độ_sâu_iters_trước_vòng)` cho mỗi `for`
+    /// đang mở — để `break` nhảy tới cuối vòng thì cũng pop iterator như `IterNext` hết vòng.
+    pub(crate) loop_ends: Vec<(u32, usize, usize)>,
 }
 
 impl<'m> Th<'m> {
-    fn new(m: &'m Module, fi: u32, locals: Vec<Value>, captured: Vec<Value>) -> Self {
+    pub(crate) fn new(m: &'m Module, fi: u32, locals: Vec<Value>, captured: Vec<Value>) -> Self {
         Self {
             m,
             frames: vec![Frame {
@@ -454,9 +645,11 @@ impl<'m> Th<'m> {
                 locals,
                 captured,
                 st_cu: Vec::new(),
+                writeback: None,
             }],
             st: Vec::new(),
             iters: Vec::new(),
+            loop_ends: Vec::new(),
         }
     }
 
@@ -480,6 +673,40 @@ impl<'m> Th<'m> {
         Ok(v)
     }
 
+    /// **ST-238 (VD-242, ca 1)**: đặt `pc` cho khung hiện tại, đồng thời nếu đích là `pc` kết
+    /// thúc của một vòng `for` đang mở thì pop iterator của vòng đó — `break` nhảy tới cuối vòng
+    /// phải có cùng hiệu ứng với `IterNext` khi hết phần tử, nếu không iterator vòng trong còn
+    /// nằm trên chồng và vòng ngoài sẽ đọc nhầm ⇒ lặp vô hạn.
+    fn dat_pc(&mut self, pc: usize) {
+        let fi = self.frames.last().expect("khung").fi;
+        if let Some(idx) = self
+            .loop_ends
+            .iter()
+            .rposition(|(f, end, _)| *f == fi && *end == pc)
+        {
+            let base = self.loop_ends[idx].2;
+            if self.iters.len() > base {
+                self.iters.truncate(base);
+            }
+            self.loop_ends.remove(idx);
+        }
+        self.frames.last_mut().expect("khung").pc = pc;
+    }
+
+    /// **ST-238 (VD-242, ca 8)**: pop khung + ghi ngược ô mirror của closure vào ô chia sẻ.
+    fn pop_frame(&mut self) -> Option<Frame> {
+        let fr = self.frames.pop()?;
+        if let Some((cells, mirror)) = &fr.writeback {
+            let mut c = cells.borrow_mut();
+            for (slot, i) in mirror {
+                if let (Some(dst), Some(src)) = (c.get_mut(*i), fr.locals.get(*slot as usize)) {
+                    *dst = src.clone();
+                }
+            }
+        }
+        Some(fr)
+    }
+
     fn day(&self, fr: &Frame, pc: i64, vm: &Vm<'_>, span: Span, what: &str) -> R<()> {
         let len = vm.func(fr.fi)?.code.len() as i64;
         if pc < 0 || pc > len {
@@ -492,7 +719,7 @@ impl<'m> Th<'m> {
         Ok(())
     }
 
-    fn exec(&mut self, vm: &mut Vm<'_>) -> R<Value> {
+    pub(crate) fn exec(&mut self, vm: &mut Vm<'_>) -> R<Value> {
         loop {
             // Ghi nhận độ sâu ngăn xếp **lớn nhất** (bất biến fuzz ST-21: `dinh ≤ need`).
             if self.st.len() > vm.dinh {
@@ -505,7 +732,7 @@ impl<'m> Th<'m> {
             if fr.pc >= f.code.len() {
                 // Hết mã mà không `Return`/`Halt` — trả `()`.
                 let v = Value::Unit;
-                self.frames.pop();
+                self.pop_frame();
                 match self.frames.last_mut() {
                     None => return Ok(v),
                     Some(f) => {
@@ -516,17 +743,23 @@ impl<'m> Th<'m> {
                 continue;
             }
             let ins = f.code[fr.pc];
+            let pc = fr.pc;
+            let fi = fr.fi;
             let span = f
                 .spans
                 .get(fr.pc)
                 .map(|s| Span::new(s.start as usize, s.end as usize))
                 .unwrap_or_else(|| Span::new(0, 0));
+            // **ST-276 (VD-256)**: charge bảng phụ TRƯỚC tác dụng phụ; pc đã được tính là điểm
+            // sẽ chạy, continuation lưu pc SAU charge ⇒ resume không tính lại cả nhóm.
+            vm.budget_charge(fi, pc, span)?;
             self.frames.last_mut().expect("khung").pc += 1;
             vm.steps += 1;
-            if vm.steps > MAX_STEPS {
+            if vm.steps > SAFETY_FUEL {
+                // VD-256 D8: fuel AN TOÀN VM, chẩn đoán RIÊNG; parity step-cap vẫn MỞ (D9).
                 return Err(Abort::Trap(Trap::new(
-                    RT,
-                    "chạy quá lâu (>10^7 lệnh)",
+                    SAFETY_FUEL_CODE,
+                    "VM safety fuel cạn (>10^7 lệnh) — hàng rào an toàn bytecode, không phải ngân sách ngữ nghĩa",
                     span,
                 )));
             }
@@ -536,23 +769,41 @@ impl<'m> Th<'m> {
                     self.st.push(v);
                 }
                 Instr::LoadLocal(i) => {
-                    let fr = self.frames.last().expect("khung");
-                    let v = fr.locals.get(i as usize).cloned().unwrap_or(Value::Unit);
+                    // **ST-238 (VD-242, ca 3)**: ô `>= GLOBAL_SLOT_BASE` là biến cấp tệp dùng chung.
+                    // **ST-250 (VD-245)**: đọc global luôn qua `doc_global` — trap nếu chưa khởi tạo.
+                    // **ST-252 (VD-246)**: đường local cũng qua `doc_local` — trap nếu ô ngoài khung;
+                    // `Unit` trong khung vẫn trả bình thường, không đổi sang sentinel.
+                    let v = if i >= GLOBAL_SLOT_BASE {
+                        vm.doc_global((i - GLOBAL_SLOT_BASE) as usize, span)?
+                    } else {
+                        let fr = self.frames.last().expect("khung");
+                        vm.doc_local(&fr.locals, i, span)?
+                    };
                     self.st.push(v);
                 }
                 Instr::StoreLocal(i) | Instr::Assign(i) | Instr::BindLocal(i) => {
                     let v = self.pop(vm, span)?;
-                    let fr = self.frames.last_mut().expect("khung");
-                    if (i as usize) < fr.locals.len() {
-                        fr.locals[i as usize] = v;
+                    if i >= GLOBAL_SLOT_BASE {
+                        let k = (i - GLOBAL_SLOT_BASE) as usize;
+                        // Kho đã được cấp theo module ở `run()`; chỉ số vượt kho là bytecode hỏng
+                        // (đã bị verifier chặn) — trap, tuyệt đối không resize theo chỉ số.
+                        if k >= vm.globals.len() {
+                            return Err(vm.hong(VmError::BadIdx(i as u32), span));
+                        }
+                        // **ST-250 (VD-245)**: chỉ đánh dấu đã khởi tạo **sau khi ghi thành công**.
+                        vm.globals[k] = Some(v);
                     } else {
-                        fr.locals.resize(i as usize + 1, Value::Unit);
-                        fr.locals[i as usize] = v;
+                        // **ST-252 (VD-246)**: ghi local có kiểm tra — ô ngoài khung trap, không
+                        // `resize` (verifier đã chặn `LocalOverflow`, đây là defence-in-depth).
+                        let fr = self.frames.last_mut().expect("khung");
+                        vm.ghi_local(&mut fr.locals, i, v, span)?;
                     }
                 }
                 Instr::LoadCaptured(i) => {
+                    // **ST-252 (VD-246)**: đọc capture có kiểm tra với môi trường thực tế của khung;
+                    // ngoài miền ⇒ trap (`VS0501`), không trả `Unit` mặc định như trước.
                     let fr = self.frames.last().expect("khung");
-                    let v = fr.captured.get(i as usize).cloned().unwrap_or(Value::Unit);
+                    let v = vm.doc_captured(&fr.captured, i, span)?;
                     self.st.push(v);
                 }
                 Instr::Pop => {
@@ -604,12 +855,23 @@ impl<'m> Th<'m> {
                         locals,
                         captured: Vec::new(),
                         st_cu: Vec::new(),
+                        writeback: None,
                     });
                 }
                 Instr::CallBuiltin(i, n) => {
                     let ten = vm.ten(i, span)?;
                     let args = self.pop_n(vm, n as usize, span)?;
-                    let v = builtin::call(vm, &ten, args, span)?;
+                    // **ST-238 (VD-242, ca 7)**: builtin giả do codegen phát ở nhánh `match` rơi —
+                    // trap `VS0501` với cùng thông điệp/span của interp, không im lặng đi tiếp.
+                    if ten == BI_MATCH_NO_ARM {
+                        return Err(Abort::Trap(Trap::new(
+                            RT,
+                            "`match` không khớp nhánh nào (không xét hết bị lọt)",
+                            span,
+                        )));
+                    }
+                    // ST-267/VD-251: hook frame-only (default = `builtin::call` cũ).
+                    let v = crate::vm_frame::call_builtin_frame(self, vm, &ten, args, span)?;
                     self.st.push(v);
                 }
                 Instr::CallMethod(i, n) => {
@@ -626,7 +888,7 @@ impl<'m> Th<'m> {
                         self.day(fr, pc, vm, span, "Jump")?;
                         pc
                     };
-                    self.frames.last_mut().expect("khung").pc = pc as usize;
+                    self.dat_pc(pc as usize);
                 }
                 Instr::JumpIfFalse(d) => {
                     let v = self.pop(vm, span)?;
@@ -638,7 +900,7 @@ impl<'m> Th<'m> {
                             self.day(fr, pc, vm, span, "JumpIfFalse")?;
                             pc
                         };
-                        self.frames.last_mut().expect("khung").pc = pc as usize;
+                        self.dat_pc(pc as usize);
                     }
                 }
                 Instr::JumpIfNotTrue(d) => {
@@ -654,7 +916,7 @@ impl<'m> Th<'m> {
                             self.day(fr, pc, vm, span, "JumpIfNotTrue")?;
                             pc
                         };
-                        self.frames.last_mut().expect("khung").pc = pc as usize;
+                        self.dat_pc(pc as usize);
                     }
                 }
                 Instr::JumpIfNone(d) => {
@@ -667,7 +929,7 @@ impl<'m> Th<'m> {
                             self.day(fr, pc, vm, span, "JumpIfNone")?;
                             pc
                         };
-                        self.frames.last_mut().expect("khung").pc = pc as usize;
+                        self.dat_pc(pc as usize);
                     }
                 }
                 Instr::JumpIfSome(d) => {
@@ -680,17 +942,14 @@ impl<'m> Th<'m> {
                             self.day(fr, pc, vm, span, "JumpIfSome")?;
                             pc
                         };
-                        self.frames.last_mut().expect("khung").pc = pc as usize;
+                        self.dat_pc(pc as usize);
                     }
                 }
                 Instr::Return | Instr::Halt => {
-                    // `Halt` **không** lấy giá trị đỉnh (chương trình kết thúc bằng câu lệnh ⇒ `()`).
-                    let v = if matches!(ins, Instr::Halt) {
-                        Value::Unit
-                    } else {
-                        self.st.pop().unwrap_or(Value::Unit)
-                    };
-                    self.frames.pop();
+                    // **VD-241 §3/T5 (A0, 2026-11-19)** — `Halt` giữ nguyên giá trị trên ngăn xếp
+                    // (không ép về `()`); `Result::Err` của `main` đi thẳng ra `RunOutput.exit` ⇒ CLI exit 1.
+                    let v = self.st.pop().unwrap_or(Value::Unit);
+                    self.pop_frame();
                     match self.frames.last_mut() {
                         None => return Ok(v),
                         Some(f) => {
@@ -700,16 +959,34 @@ impl<'m> Th<'m> {
                         }
                     }
                 }
-                Instr::MakeList(n) | Instr::MakeTuple(n) | Instr::MakeSet(n) => {
+                Instr::MakeList(n) | Instr::MakeTuple(n) => {
                     let items = self.pop_n(vm, n as usize, span)?;
                     self.st.push(Value::List(items));
                 }
+                // **ST-239 (VD-242 §4, ca 10)**: `set{…}` là **tập** — giữ phần tử đầu mỗi
+                // giá trị, bỏ phần tử trùng (interp đã làm vậy; VM trước đây giữ cả).
+                Instr::MakeSet(n) => {
+                    let items = self.pop_n(vm, n as usize, span)?;
+                    let mut uniq: Vec<Value> = Vec::with_capacity(items.len());
+                    for v in items {
+                        if !uniq.iter().any(|x| value::eq(x, &v)) {
+                            uniq.push(v);
+                        }
+                    }
+                    self.st.push(Value::List(uniq));
+                }
                 Instr::MakeMap(n) => {
+                    // **ST-239 (VD-242 §3.4, ca 170)**: runtime last-wins, khớp interp —
+                    // mỗi khoá một entry (giữ giá trị cuối, vị trí chèn đầu).
                     let flat = self.pop_n(vm, 2 * n as usize, span)?;
-                    let mut pairs = Vec::with_capacity(n as usize);
+                    let mut pairs: Vec<(Value, Value)> = Vec::with_capacity(n as usize);
                     let mut it = flat.into_iter();
                     while let (Some(k), Some(v)) = (it.next(), it.next()) {
-                        pairs.push((k, v));
+                        if let Some(e) = pairs.iter_mut().find(|(kk, _)| value::eq(kk, &k)) {
+                            e.1 = v;
+                        } else {
+                            pairs.push((k, v));
+                        }
                     }
                     self.st.push(Value::Map(pairs));
                 }
@@ -734,12 +1011,10 @@ impl<'m> Th<'m> {
                 }
                 Instr::MakeSome => {
                     let v = self.pop(vm, span)?;
-                    // **Không** bọc hai lớp: `T?` → `T?` (giữ phẳng như interp).
-                    match v {
-                        // **VD-204 (1)**: enum `Option` thật — giữ phẳng (`Option` ⇒ `Option`).
-                        Value::Enum(ref ea, ..) if ea == "Option" => self.st.push(v),
-                        other => self.st.push(Value::some(other)),
-                    }
+                    // **VD-241 §3 (A0, 2026-11-19)**: `Some(x)` luôn thêm **đúng một lớp** —
+                    // không giữ phẳng, không bọc chồng người dùng đã `Some(..)`; guard chọn
+                    // vị trí này nằm ở emit-site (`opt_wrap`), không phải tại đây.
+                    self.st.push(Value::some(v));
                 }
                 Instr::MakeNone => self.st.push(Value::none()),
                 Instr::MakeOk => {
@@ -752,10 +1027,15 @@ impl<'m> Th<'m> {
                 }
                 Instr::MakeClosure(fi, n) => {
                     let cap = self.pop_n(vm, n as usize, span)?;
-                    self.st.push(Value::Vm(std::rc::Rc::new(VmFunc {
+                    let func = Rc::new(VmFunc {
                         idx: fi,
-                        captured: cap,
-                    })));
+                        captured: cap.clone(),
+                    });
+                    // **ST-238 (VD-242, ca 8)**: tạo ô chia sẻ ngay lúc tạo closure. Mọi lần gọi
+                    // cùng closure dùng chung ô này ⇒ ghi biến bắt `var` không bị reset.
+                    let ptr = Rc::as_ptr(&func) as usize;
+                    vm.closure_cells.insert(ptr, Rc::new(RefCell::new(cap)));
+                    self.st.push(Value::Vm(func));
                 }
                 Instr::Field(i) => {
                     let ten = vm.ten(i, span)?;
@@ -813,6 +1093,17 @@ impl<'m> Th<'m> {
                     self.st.push(Value::Str(s));
                 }
                 Instr::IterInit => {
+                    // **ST-238 (VD-242, ca 1)**: `IterInit` ngay trước `IterNext`; tính `pc` kết
+                    // thúc vòng từ offset của `IterNext` để nhận diện `break` nhảy tới đó.
+                    let fi = self.frames.last().expect("khung").fi;
+                    let base = self.iters.len();
+                    let next_pc = self.frames.last().expect("khung").pc;
+                    if let Some(Instr::IterNext(d)) = self.m.funcs[fi as usize].code.get(next_pc) {
+                        let end_pc = next_pc as i64 + i64::from(*d);
+                        if end_pc >= 0 {
+                            self.loop_ends.push((fi, end_pc as usize, base));
+                        }
+                    }
                     let it = self.pop(vm, span)?;
                     let items = value::iter_items(it, span)?;
                     self.iters.push((items, 0));
@@ -829,7 +1120,7 @@ impl<'m> Th<'m> {
                             self.day(fr, pc, vm, span, "IterNext")?;
                             pc
                         };
-                        self.frames.last_mut().expect("khung").pc = pc as usize;
+                        self.dat_pc(pc as usize);
                     } else {
                         let v = items[*i].clone();
                         *i += 1;
@@ -889,8 +1180,72 @@ impl<'m> Th<'m> {
                 Instr::CallValue(n) => {
                     let args = self.pop_n(vm, n as usize, span)?;
                     let f = self.pop(vm, span)?;
-                    let v = builtin::Host::call(vm, &f, args, span)?;
-                    self.st.push(v);
+                    match f {
+                        // **VD-257 (stream B)** — gọi hàm bytecode (closure/fn-value) phải mở khung
+                        // **trong chính `Th` này** (như `Instr::Call`), KHÔNG dùng `goi_ham_bytecode`
+                        // tạo `Th` lồng nhau: `Th` lồng không suspend/resume được. Khi thân closure
+                        // `await` trả `Abort::Pending`, driver frame lưu `Th` ngoài; `Th` lồng (cùng
+                        // pc/stack của `$await`) bị mất ⇒ resume chạy lại `CallValue` với ngăn xếp
+                        // đã pop đối số ⇒ `StackUnderflow`. Đẩy khung vào `self.frames` giữ nguyên
+                        // trạng thái suspend được. Không đổi opcode/ngôn ngữ/runtime mặc định.
+                        Value::Vm(vf) => {
+                            let fi = vf.idx;
+                            let fc = vm.func(fi)?;
+                            let nlocals = fc.nlocals.max(1) as usize;
+                            if self.frames.len() + vm.depth + 1 >= MAX_FRAMES {
+                                return Err(Abort::Trap(Trap::new(
+                                    RT,
+                                    format!("gọi hàm quá sâu (>{MAX_FRAMES} khung) — đệ quy không có điểm dừng?"),
+                                    span,
+                                )));
+                            }
+                            // Mirror prologue `LoadCaptured(i); Assign(slot)` — giữ writeback closure.
+                            let mut mirror: Vec<(u16, usize)> = Vec::new();
+                            let mut k = 0;
+                            while k + 1 < fc.code.len() {
+                                if let (Instr::LoadCaptured(i), Instr::Assign(slot)) =
+                                    (fc.code[k], fc.code[k + 1])
+                                {
+                                    mirror.push((slot, i as usize));
+                                    k += 2;
+                                } else {
+                                    break;
+                                }
+                            }
+                            let ptr = Rc::as_ptr(&vf) as usize;
+                            let cells = match vm.closure_cells.get(&ptr) {
+                                Some(c) => c.clone(),
+                                None => {
+                                    let c = Rc::new(RefCell::new(vf.captured.clone()));
+                                    vm.closure_cells.insert(ptr, c.clone());
+                                    c
+                                }
+                            };
+                            let captured = cells.borrow().clone();
+                            let mut locals = vec![Value::Unit; nlocals];
+                            for (i, a) in args.into_iter().enumerate() {
+                                if i < locals.len() {
+                                    locals[i] = a;
+                                }
+                            }
+                            let cu = std::mem::take(&mut self.st);
+                            if let Some(fr) = self.frames.last_mut() {
+                                fr.st_cu = cu;
+                            }
+                            self.frames.push(Frame {
+                                fi,
+                                pc: 0,
+                                locals,
+                                captured,
+                                st_cu: Vec::new(),
+                                writeback: Some((cells, mirror)),
+                            });
+                        }
+                        other => {
+                            let v = builtin::Host::call(vm, &other, args, span)?;
+                            self.st.push(v);
+                        }
+                    }
                 }
                 Instr::IsUnit => {
                     let v = self.pop(vm, span)?;
@@ -934,14 +1289,15 @@ impl<'m> Th<'m> {
                         Value::List(xs) => xs.get(i as usize).cloned(),
                         _ => None,
                     };
-                    let x = x.ok_or_else(|| {
-                        Abort::Trap(Trap::new(
-                            RT,
-                            format!("không lấy được đối số thứ {i}"),
-                            span,
-                        ))
-                    })?;
-                    self.st.push(x);
+                    // **VD-241 §3+ (A0, 2026-11-19)** — `pattern::test` phát `Unwrap` để **tính
+                    // thử** đối số của arm trước khi arm được chọn: giá trị hỏng hình (ví dụ
+                    // `None` gặp arm ctor `Some(…)`) **không được trap** — arm đó phải bị loại
+                    // (test con ra `false`, `BoolAnd` giữ `false`), như interp khớp cấu trúc
+                    // thật. Đẩy `Unit` khi hỏng hình; mọi test (`TestCtor`/`TestLit`/`TestRange`/
+                    // `TestTuple`/`TestList`/`TestRecord`/or) đều cho `false` với `Unit`. Các chỗ
+                    // bind/`let else` phát `Unwrap` **sau** `TestCtor(true)` nên không bao giờ
+                    // chạm nhánh hỏng hình trong chương trình hợp lệ.
+                    self.st.push(x.unwrap_or(Value::Unit));
                 }
                 Instr::Try => {
                     let v = self.pop(vm, span)?;
@@ -950,7 +1306,7 @@ impl<'m> Th<'m> {
                             if (ea == "Option" && va == "None")
                                 || (ea == "Result" && va == "Err") =>
                         {
-                            self.frames.pop();
+                            self.pop_frame();
                             match self.frames.last_mut() {
                                 None => return Ok(v),
                                 Some(f) => {
@@ -969,177 +1325,97 @@ impl<'m> Th<'m> {
                     }
                 }
             }
-        }
-    }
-}
-
-/// `kind` số của const pool → `LitKind`.
-fn lit_kind(k: u8) -> Option<LitKind> {
-    Some(match k {
-        0 => LitKind::Int,
-        1 => LitKind::Float,
-        2 => LitKind::Size,
-        3 => LitKind::Duration,
-        4 => LitKind::Percent,
-        5 => LitKind::Str,
-        6 => LitKind::Bytes,
-        7 => LitKind::Path,
-        8 => LitKind::Char,
-        9 => LitKind::Bool,
-        _ => return None,
-    })
-}
-
-fn field(v: &Value, name: &str, span: Span) -> R<Value> {
-    // `.` trên `Some(x)` tự bóc (interp làm vậy) — `?.` mới là đường có kiểm `None`.
-    // `.` trên `Some(x)` tự bóc (interp làm vậy) — `?.` mới là đường có kiểm `None`.
-    if let Some(x) = v.opt_payload() {
-        return field(x, name, span);
-    }
-    match v {
-        Value::Record(_, fs) => fs
-            .iter()
-            .find(|(k, _)| k == name)
-            .map(|(_, v)| v.clone())
-            .ok_or_else(|| {
-                Abort::Trap(Trap::new(
-                    RT,
-                    format!("bản ghi không có trường `{name}`"),
+            // VD-257/D — hết hạn ngạch: yield về ĐUÔI ready, KHÔNG trap. Đặt CUỐI
+            // thân loop: lệnh vừa charge đã thi hành xong và `pc` đã tăng (D6) ⇒
+            // resume ở lệnh kế, KHÔNG chạy lại / charge lại lệnh cũ. `Th` đã có
+            // đủ trạng thái (frames/st/locals/captured/writeback) để driver cất.
+            // `quota_active = false` (mặc định) ⇒ no-op, runtime thường không đổi.
+            if vm.quota_take_hit() {
+                let cur = vm.sched.borrow().frame.current;
+                vm.sched.borrow_mut().frame.log.push(format!("quota:{cur}"));
+                return Err(Abort::Pending(vis_interp::rt::Pending {
+                    task: None,
+                    wait: None,
                     span,
-                ))
-            }),
-        Value::Enum(_, _, args) => {
-            let i: usize = name.parse().map_err(|_| {
-                Abort::Trap(Trap::new(RT, format!("`{name}` không phải trường"), span))
-            })?;
-            args.get(i)
-                .cloned()
-                .ok_or_else(|| Abort::Trap(Trap::new(RT, format!("không có đối số thứ {i}"), span)))
-        }
-        other => Err(Abort::Trap(Trap::new(
-            RT,
-            format!("`{}` không có trường `{name}`", other.show()),
-            span,
-        ))),
-    }
-}
-
-fn index(base: &Value, idx: &Value, span: Span) -> R<Value> {
-    // ST-30b: **trùng đúng** chẩn đoán của interp (cùng mã `VS0503`, cùng thông điệp) — hai đường
-    // phải cho **cùng** danh sách `(mã, dòng, cột, thông điệp)`; trước đây VM dùng `VS0501` + câu ngắn.
-    match (base, idx) {
-        (Value::List(xs), Value::Int(i)) => {
-            let len = xs.len() as i64;
-            if *i < 0 {
-                return Err(Abort::Trap(Trap::new(
-                    IDX,
-                    format!("chỉ số âm `{i}` (dùng `.last()` hoặc `xs[i]?`)"),
-                    span,
-                )));
-            }
-            xs.get(*i as usize).cloned().ok_or_else(|| {
-                Abort::Trap(Trap::new(
-                    IDX,
-                    format!("chỉ số {i} ngoài phạm vi (độ dài {len})"),
-                    span,
-                ))
-            })
-        }
-        (Value::Bytes(bs), Value::Int(i)) => {
-            let len = bs.len() as i64;
-            if *i < 0 || *i >= len {
-                return Err(Abort::Trap(Trap::new(
-                    IDX,
-                    format!("chỉ số {i} ngoài phạm vi (độ dài {len})"),
-                    span,
-                )));
-            }
-            Ok(Value::Int(bs[*i as usize] as i64))
-        }
-        (Value::Map(kv), k) => kv
-            .iter()
-            .find(|(kk, _)| value::eq(kk, k))
-            .map(|(_, v)| v.clone())
-            .ok_or_else(|| {
-                Abort::Trap(Trap::new(
-                    IDX,
-                    format!("khoá `{}` không có trong map", k.show()),
-                    span,
-                ))
-            }),
-        (other, idx) => Err(Abort::Trap(Trap::new(
-            RT,
-            format!("không chỉ số được `{}` bằng `{}`", other.show(), idx.show()),
-            span,
-        ))),
-    }
-}
-
-fn set(base: &Value, idx: &Value, v: Value, span: Span) -> R<Value> {
-    match (base, idx) {
-        (Value::List(xs), Value::Int(i)) => {
-            let mut xs = xs.clone();
-            if (*i as usize) < xs.len() {
-                xs[*i as usize] = v;
-                Ok(Value::List(xs))
-            } else {
-                Err(Abort::Trap(Trap::new(
-                    RT,
-                    format!("chỉ số {i} ngoài phạm vi"),
-                    span,
-                )))
+                }));
             }
         }
-        (Value::Map(kv), k) => {
-            let mut kv = kv.clone();
-            if let Some(e) = kv.iter_mut().find(|(kk, _)| value::eq(kk, k)) {
-                e.1 = v;
-            } else {
-                kv.push((k.clone(), v));
-            }
-            Ok(Value::Map(kv))
-        }
-        _ => Err(Abort::Trap(Trap::new(RT, "gán chỉ số không hợp lệ", span))),
     }
 }
 
-fn with(base: &Value, pairs: Vec<(String, Value)>, span: Span) -> R<Value> {
-    match base {
-        Value::Record(ten, fs) => {
-            let mut fs = fs.clone();
-            for (k, v) in pairs {
-                if let Some(e) = fs.iter_mut().find(|(kk, _)| *kk == k) {
-                    e.1 = v;
-                } else {
-                    return Err(Abort::Trap(Trap::new(
-                        RT,
-                        format!("bản ghi `{ten}` không có trường `{k}`"),
-                        span,
-                    )));
-                }
-            }
-            Ok(Value::Record(ten.clone(), fs))
-        }
-        other => Err(Abort::Trap(Trap::new(
-            RT,
-            format!("`with` không dùng được cho `{}`", other.show()),
-            span,
-        ))),
-    }
-}
+// ST-252 (VD-246): test nội bộ cho hàng rào runtime (helper private, không gọi được từ integration test).
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-/// **R8 (VD-178)**: `xs[i]?` — trả `Some(v)` nếu trong phạm vi, `None` nếu ngoài (không panic).
-fn index_opt(base: &Value, idx: &Value) -> Value {
-    match (base, idx) {
-        (Value::List(xs), Value::Int(i)) if *i >= 0 => Value::opt(xs.get(*i as usize).cloned()),
-        (Value::Bytes(bs), Value::Int(i)) if *i >= 0 => {
-            Value::opt(bs.get(*i as usize).map(|b| Value::Int(*b as i64)))
+    fn vm() -> Vm<'static> {
+        static M: std::sync::OnceLock<Module> = std::sync::OnceLock::new();
+        let m = M.get_or_init(|| Module {
+            version: vis_bytecode::VERSION,
+            source_hash: [0u8; vis_bytecode::HASH_LEN],
+            consts: vec![],
+            funcs: vec![vis_bytecode::Func {
+                name: "main".into(),
+                arity: 0,
+                nparams: 0,
+                nlocals: 0,
+                max_stack: 1,
+                code: vec![Instr::PushUnit, Instr::Return],
+                spans: vec![vis_bytecode::Span { start: 0, end: 0 }; 2],
+            }],
+            entry: 0,
+        });
+        Vm::new(m, "")
+    }
+
+    fn trap(e: Abort) -> String {
+        match e {
+            Abort::Trap(t) => {
+                assert_eq!(t.code.short, "VS0501");
+                t.msg
+            }
+            _ => panic!("expected runtime trap"),
         }
-        (Value::Map(kv), k) => Value::opt(
-            kv.iter()
-                .find(|(kk, _)| kk.eq_value(k))
-                .map(|(_, v)| v.clone()),
-        ),
-        _ => Value::none(),
+    }
+
+    #[test]
+    fn capture_local_barrier() {
+        let vm = vm();
+        let one = vec![Value::Unit];
+        assert!(value::eq(
+            &vm.doc_local(&one, 0, Span::new(0, 0)).unwrap(),
+            &Value::Unit
+        ));
+        let msg = trap(vm.doc_local(&one, 1, Span::new(0, 0)).unwrap_err());
+        assert!(
+            msg.contains("biến cục bộ 1 ngoài khung") && msg.contains("1 ô"),
+            "{msg}"
+        );
+        assert!(value::eq(
+            &vm.doc_captured(&one, 0, Span::new(0, 0)).unwrap(),
+            &Value::Unit
+        ));
+        for (cap, i, want) in [
+            (
+                &[] as &[Value],
+                0,
+                "biến bắt 0 ngoài môi trường capture (0 ô)",
+            ),
+            (&one[..], 1, "biến bắt 1 ngoài môi trường capture (1 ô)"),
+            (&one[..], u16::MAX, "biến bắt 65535 ngoài"),
+        ] {
+            let msg = trap(vm.doc_captured(cap, i, Span::new(0, 0)).unwrap_err());
+            assert!(msg.contains(want), "{msg}");
+        }
+        let mut slot = vec![Value::Unit];
+        vm.ghi_local(&mut slot, 0, Value::Int(7), Span::new(0, 0))
+            .unwrap();
+        assert!(value::eq(&slot[0], &Value::Int(7)));
+        let msg = trap(
+            vm.ghi_local(&mut slot, 1, Value::Int(9), Span::new(0, 0))
+                .unwrap_err(),
+        );
+        assert!(msg.contains("ghi biến cục bộ 1 ngoài khung"), "{msg}");
+        assert_eq!(slot.len(), 1);
     }
 }

@@ -131,7 +131,8 @@ pub fn ds_cap(text: &str, mode: Mode) -> Vec<CapKhai> {
             let Some(tyn) = p.child(NodeKind::Type) else {
                 continue;
             };
-            let ty = text
+            // **VD-241 § fix(Windows/CRLF #psvn-A1)**: span trỏ vào văn bản đã chuẩn hoá CRLF→LF.
+            let ty = vis_syntax::lex::normalize_source(text)
                 .get(tyn.span.start..tyn.span.end)
                 .unwrap_or("")
                 .trim()
@@ -165,7 +166,9 @@ pub fn ds_cap(text: &str, mode: Mode) -> Vec<CapKhai> {
                     g.children()
                         .filter(|x| x.kind == NodeKind::DottedPath)
                         .any(|x| {
-                            text.get(x.span.start..x.span.end)
+                            // **VD-241 § fix(Windows/CRLF #psvn-A1)**: span trỏ vào văn bản chuẩn hoá.
+                            vis_syntax::lex::normalize_source(text)
+                                .get(x.span.start..x.span.end)
                                 .map(|s| s.trim() == "write")
                                 .unwrap_or(false)
                         })
@@ -285,8 +288,10 @@ fn la_tep_thuc_thi(p: &Path) -> bool {
 }
 
 #[cfg(not(unix))]
-fn la_tep_thuc_thi(_p: &Path) -> bool {
-    false
+fn la_tep_thuc_thi(p: &Path) -> bool {
+    // **VD-241 § fix(Windows/CRLF #psvn-A4)**: trên non-unix, không có bit `x` — chấp nhận tệp thường
+    // làm "chạy được" (khớp `la_tep_lenh`); đối tượng `cap[Dir]` / `cap[File]` nhận tệp thật để check.
+    la_tep_lenh(p)
 }
 
 /// **ST-123 (VD-130c)**: tệp **chạy được** — Unix: tệp thường + bit `x`; nền khác: tệp thường.
@@ -311,14 +316,38 @@ fn la_tep_lenh(p: &Path) -> bool {
 ///   tiên — **cùng** luật `execvp` sẽ dùng khi chạy.
 /// - Giá trị **có `/`** ⇒ ghép `goc` nếu tương đối, rồi `canonicalize` (theo symlink).
 /// - Không phân giải được ⇒ `Err` có chẩn đoán rõ (CLI in ra rồi exit 2), **không** im lặng nhận.
+///
+/// Các tên khả dĩ để dò trong `PATH`: nguyên tên + các đuôi thực thi Windows (PATHEXT).
+/// Unix: chỉ nguyên tên (đúng `execvp`).
+#[cfg(not(unix))]
+fn ung_vien_path(thu_muc: &Path, v: &str) -> Vec<PathBuf> {
+    let mut kq = vec![thu_muc.join(v)];
+    if Path::new(v).extension().is_none() {
+        let pat = std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".into());
+        for e in pat.split(';') {
+            let e = e.trim();
+            if !e.is_empty() {
+                kq.push(thu_muc.join(format!("{v}{e}")));
+            }
+        }
+    }
+    kq
+}
+
+#[cfg(unix)]
+fn ung_vien_path(thu_muc: &Path, v: &str) -> Vec<PathBuf> {
+    vec![thu_muc.join(v)]
+}
+
 pub fn phan_giai_lenh(v: &str, goc: &Path) -> Result<PathBuf, String> {
     if !v.contains('/') {
         let path = std::env::var_os("PATH").unwrap_or_default();
         for thu_muc in std::env::split_paths(&path) {
-            let ung = thu_muc.join(v);
-            if let Ok(c) = std::fs::canonicalize(&ung) {
-                if la_tep_lenh(&c) {
-                    return Ok(c);
+            for ung in ung_vien_path(&thu_muc, v) {
+                if let Ok(c) = std::fs::canonicalize(&ung) {
+                    if la_tep_lenh(&c) {
+                        return Ok(c);
+                    }
                 }
             }
         }

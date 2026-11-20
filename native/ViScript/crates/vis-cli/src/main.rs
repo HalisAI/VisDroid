@@ -5,6 +5,7 @@ use std::process::ExitCode;
 
 #[cfg(test)]
 mod audit_span;
+mod db;
 /// **ST-174 (VD-176 §2)** — ca **tất định** cho nợ `#146` (điểm chèn `quyen::chen`); **chỉ** test.
 #[cfg(test)]
 mod quyen_st174;
@@ -128,7 +129,89 @@ impl HostFs {
     }
 }
 
+/// **ST-240 / VD-242 §4 (nợ #177)**: trap runtime mang `Span.file` của module, nhưng
+/// `Trap::to_diag` tính `line/col` trên văn bản **tệp chính**. Ánh xạ lại về đúng tệp + văn bản đã
+/// chuẩn hoá CRLF→LF (cùng thứ tự byte với `span`) trước khi in. Với tệp chính, giữ nguyên đường
+/// dẫn người dùng nhập (`tep`) để không đổi định dạng chẩn đoán cũ.
+fn vi_tri_runtime(
+    file_rel: &[String],
+    files: &[modules::FileUnit],
+    tep: &str,
+    d: &vis_syntax::Diagnostic,
+) -> (String, u32, u32) {
+    let rel_chinh = file_rel.first().cloned().unwrap_or_default();
+    let rel = file_rel
+        .get(d.span.file as usize)
+        .cloned()
+        .unwrap_or_else(|| rel_chinh.clone());
+    // **VM (#177)**: bytecode `Span` chỉ lưu `start/end` (không có `file`), nên trap trong module
+    // mang `file = 0`. Nếu tệp chính **không chứa** được khoảng byte này nhưng đúng **một** module
+    // chứa ⇒ gán về module đó. Điều kiện "duy nhất" tránh đoán sai khi nhiều tệp cùng đủ dài.
+    let mut rel = rel;
+    if d.span.file == 0 {
+        let cover = |t: &str| {
+            let n = vis_syntax::lex::normalize_source(t);
+            d.span.end <= n.len()
+                && n.is_char_boundary(d.span.start)
+                && n.is_char_boundary(d.span.end)
+        };
+        let chinh_cover = files
+            .iter()
+            .find(|f| f.rel == rel_chinh)
+            .map(|f| cover(&f.text))
+            .unwrap_or(false);
+        if !chinh_cover {
+            let mut ung_vien: Vec<&modules::FileUnit> = files
+                .iter()
+                .filter(|f| f.rel != rel_chinh && cover(&f.text))
+                .collect();
+            if ung_vien.len() == 1 {
+                rel = ung_vien.remove(0).rel.clone();
+            }
+        }
+    }
+    // Đường dẫn hiển thị: tệp chính giữ nguyên đối số người dùng; module ⇒ `thư_mục_chính/rel`.
+    let hien = if rel == rel_chinh {
+        tep.to_string()
+    } else {
+        std::path::Path::new(tep)
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new(""))
+            .join(&rel)
+            .to_string_lossy()
+            .to_string()
+    };
+    let (mut line, mut col) = (d.line, d.col);
+    if let Some(f) = files.iter().find(|f| f.rel == rel) {
+        let norm = vis_syntax::lex::normalize_source(&f.text);
+        (line, col) = modules::vi_tri(&norm, d.span);
+    }
+    (hien, line, col)
+}
 
+
+
+/// **ST-238 / VD-242 (nợ #181)**: `--dry`/`--sandbox-check` không được nuốt lỗi cú pháp rồi in
+/// “không khai báo quyền” với exit 0. Probes chỉ đọc CST nên trước đây bỏ qua chẩn đoán parse.
+/// Ta kiểm parse ngay sau khi đọc tệp, in cùng định dạng `vis run` và trả exit 2 như đường thường.
+fn kiem_cu_phap_probe(tep: &str, text: &str, mode: Mode) -> Option<ExitCode> {
+    let parsed = vis_syntax::parse(text, mode);
+    let loi: Vec<_> = parsed
+        .diagnostics
+        .iter()
+        .filter(|d| d.code.severity == vis_diag::Severity::Error)
+        .collect();
+    if loi.is_empty() {
+        return None;
+    }
+    for d in loi {
+        eprintln!(
+            "{tep}:{}:{}: error {}: {}",
+            d.line, d.col, d.code.short, d.message
+        );
+    }
+    Some(ExitCode::from(2))
+}
 
 /// `vis run [--tap] <tệp.vis> [-- args…]` — parse → lower → check → interp (ST-14).
 pub fn run_run(rest: &[String]) -> ExitCode {
@@ -146,6 +229,9 @@ pub fn run_run(rest: &[String]) -> ExitCode {
     // **ST-72b (VD-103)**: `--grant <tên>=<path>` thay root của cap đã khai (không thêm quyền mới).
     let mut grants: Vec<(String, String)> = Vec::new();
     let mut explain_perms = false;
+    // **VD-241 pre-merge §8 (2026-11-19)**: opt-in thông điệp thô từ SQLite (có thể chứa SQL
+    // fragment/bound values); mặc định mọi thông điệp từ SQLite chỉ gồm mã lỗi + tên lớp + offset.
+    let mut sqlite_debug = false;
     // **ST-81 (VD-108)**: mọi truy cập fs/net phải nằm trong `cap` đã khai (mặc định: không siết).
     let mut strict_caps = false;
     // **ST-130 (VD-124)**: thoát **tường minh** khỏi chế độ siết mặc định khi chương trình dùng gói
@@ -186,6 +272,8 @@ pub fn run_run(rest: &[String]) -> ExitCode {
             }
             // ST-27: in nhật ký quyền trước mỗi lần chạy chương trình ngoài.
             "--explain-perms" => explain_perms = true,
+            // VD-241 pre-merge §8: thông điệp thô từ SQLite (chỉ khi user chủ động bật).
+            "--sqlite-debug" => sqlite_debug = true,
             // ST-27: tắt chương trình ngoài ⇒ lệnh lạ `VS0601`.
             "--no-extern" => co_no_extern = true,
             // ST-42: `FsHost` **mock tất định** từ kịch bản JSON (test hermetic).
@@ -217,7 +305,7 @@ pub fn run_run(rest: &[String]) -> ExitCode {
     }
     let Some(tep) = tep else {
         eprintln!(
-            "dùng: vis run [--tap] [--vm] [--dump-bytecode] [--dump-deps] [--dry] [--sandbox] [--sandbox-check] [--strict-caps] [--no-strict-caps] [--grant tên=path] [--no-cache] <tệp.vis> [-- args…]\n  --strict-caps: mọi truy cập `std.fs`/`net` và tiến trình ngoài (`cap[Proc]`) phải nằm trong `cap` đã khai (mặc định: không siết, **trừ** khi chương trình dùng gói `use pkg.*` ⇒ siết — VD-124)\n  --no-strict-caps: thoát tường minh chế độ siết khi dùng gói; in **một** dòng cảnh báo ra stderr"
+            "dùng: vis run [--tap] [--vm] [--dump-bytecode] [--dump-deps] [--dry] [--sandbox] [--sandbox-check] [--strict-caps] [--no-strict-caps] [--grant tên=path] [--no-cache] [--sqlite-debug] <tệp.vis> [-- args…]\n  --strict-caps: mọi truy cập `std.fs`/`net` và tiến trình ngoài (`cap[Proc]`) phải nằm trong `cap` đã khai (mặc định: không siết, **trừ** khi chương trình dùng gói `use pkg.*` ⇒ siết — VD-124)\n  --no-strict-caps: thoát tường minh chế độ siết khi dùng gói; in **một** dòng cảnh báo ra stderr\n  --sqlite-debug: in thông điệp thô từ SQLite (có thể chứa SQL fragment/bound values; mặc định: chỉ mã lỗi)"
         );
         return ExitCode::from(2);
     };
@@ -258,11 +346,17 @@ pub fn run_run(rest: &[String]) -> ExitCode {
     // **ST-73 (VD-107)**: `--sandbox-check` — probe Landlock **chỉ đọc** + mức cưỡng chế runtime;
     // in **stdout**, exit 0/3/4, **không** chạy chương trình.
     if sandbox_check {
+        if let Some(ma) = kiem_cu_phap_probe(&tep, &text, che_do) {
+            return ma;
+        }
         let caps = quyen::ds_cap(&text, che_do);
         return in_sandbox_check(&caps);
     }
     // **ST-72 (VD-106 (2))**: `--dry` — chỉ in quyền từ CST của `main`, exit 0, **không** chạy.
     if dry {
+        if let Some(ma) = kiem_cu_phap_probe(&tep, &text, che_do) {
+            return ma;
+        }
         return run_dry(&tep, &text, che_do);
     }
     // **ST-72b (VD-103/VD-106)**: quyền theo `cap` của `main` + `--grant`.
@@ -333,6 +427,8 @@ pub fn run_run(rest: &[String]) -> ExitCode {
             return ExitCode::from(2);
         }
     };
+    // ST-240 (#177): giữ bảng `file_id → rel` trước khi partial-move `loaded` vào `h`.
+    let file_rel = loaded.file_rel.clone();
     let mut h = vis_types::HirOutput {
         hir: loaded.hir,
         diagnostics: Vec::new(),
@@ -369,12 +465,39 @@ pub fn run_run(rest: &[String]) -> ExitCode {
     // 4) chạy — **trong luồng có stack lớn** (ST-15): đệ quy sâu (đến cap `MAX_CALL_DEPTH` = 10^4)
     //    không được làm tràn stack process; cap vượt ⇒ `VS0501` bình thường.
     // **ST-56b (VD-97 (5))**: phần tử thứ 4 = **lỗi codegen** (đường `--vm`) ⇒ exit ≠ 0.
-    let (stdout, diags, steps, loi_codegen) = std::thread::scope(|scope| {
+    // **VD-241 §3/T5 (A0, 2026-11-19)**: phần tử thứ 5 = `exit_val` từ `RunOutput` (Err ⇒ 1).
+    let (stdout, diags, steps, loi_codegen, exit_val) = std::thread::scope(|scope| {
         std::thread::Builder::new()
             .name("vis-run".into())
             // 256 MiB: đo được ~8 KiB/khung ⇒ 10^4 khung ≈ 80 MiB, còn dư.
             .stack_size(256 * 1024 * 1024)
             .spawn_scoped(scope, || {
+                // ST-33/ST-63/VD-241: `std.fs`/`std.net`/`std.sqlite` đi qua host (chỉ CLI biết OS).
+                // **ST-89 (VD-110)**: `.vish` (trừ `--no-extern`) truyền **cùng** runner Ngoai mà
+                // interp dùng — VM chỉ gọi qua trait, không chạm OS.
+                let mut runner = ngoai::Runner {
+                    giai_thich: explain_perms,
+                    cho_phep_proc: quyen.cho_phep_proc(),
+                    allow_proc: quyen.allow_proc(),
+                    ..ngoai::Runner::default()
+                };
+                let co_ngoai = che_do == vis_syntax::Mode::Command && !co_no_extern;
+                let mut fs_tho = HostFs::tao(explain_perms, fs_mock.as_ref());
+                let mut net_tho = HostNet::moi(explain_perms);
+                let mut db_tho = db::Db::moi(explain_perms);
+                db_tho.dat_sqlite_debug(sqlite_debug);
+                let mut fs = quyen::FsGuard {
+                    trong: &mut fs_tho,
+                    quyen: &quyen,
+                };
+                let mut net = quyen::NetGuard {
+                    trong: &mut net_tho,
+                    quyen: &quyen,
+                };
+                let mut dbg = db::DbGuard {
+                    trong: &mut db_tho,
+                    quyen: &quyen,
+                };
                 let out = if dung_vm {
                     // ST-20: đường **VM** — cùng `Show`/builtin/bảng ngữ nghĩa với interp.
                     // ST-23: cache theo hash closure; **luôn** nạp qua `load_verified`.
@@ -395,7 +518,7 @@ pub fn run_run(rest: &[String]) -> ExitCode {
                                     // **ST-56b (VD-97 (5))**: in chẩn đoán **và** báo hiệu
                                     // lỗi để CLI **exit ≠ 0** (trước: in rồi exit 0 — im lặng).
                                     eprintln!("vis run --vm: codegen lỗi: {e}");
-                                    return (String::new(), Vec::new(), 0, true);
+                                    return (String::new(), Vec::new(), 0, true, 1);
                                 }
                             }
                         }
@@ -403,26 +526,6 @@ pub fn run_run(rest: &[String]) -> ExitCode {
                     if dump {
                         eprintln!("{}", vis_vm::dump::dump(&m));
                     }
-                    // ST-33/ST-63: `std.fs`/`std.net` đi qua host (chỉ CLI biết OS).
-                    // **ST-89 (VD-110)**: `.vish` (trừ `--no-extern`) truyền **cùng** runner Ngoai mà
-                    // interp dùng — VM chỉ gọi qua trait, không chạm OS.
-                    let mut runner = ngoai::Runner {
-                        giai_thich: explain_perms,
-                        cho_phep_proc: quyen.cho_phep_proc(),
-                        allow_proc: quyen.allow_proc(),
-                        ..ngoai::Runner::default()
-                    };
-                    let co_ngoai = che_do == vis_syntax::Mode::Command && !co_no_extern;
-                    let mut fs_tho = HostFs::tao(explain_perms, fs_mock.as_ref());
-                    let mut net_tho = HostNet::moi(explain_perms);
-                    let mut fs = quyen::FsGuard {
-                        trong: &mut fs_tho,
-                        quyen: &quyen,
-                    };
-                    let mut net = quyen::NetGuard {
-                        trong: &mut net_tho,
-                        quyen: &quyen,
-                    };
                     let ngoai_host: Option<&mut dyn vis_interp::builtin::Ngoai> =
                         if co_ngoai { Some(&mut runner) } else { None };
                     vis_vm::run_with_full_hosts_caps(
@@ -432,26 +535,11 @@ pub fn run_run(rest: &[String]) -> ExitCode {
                         ngoai_host,
                         Some(&mut fs),
                         Some(&mut net),
+                        Some(&mut dbg),
                         &quyen.gia_tri(),
                     )
-                } else if che_do == vis_syntax::Mode::Command && !co_no_extern {
+                } else if co_ngoai {
                     // ST-27: `.vish` với runner chương trình ngoài (chỉ CLI biết OS).
-                    let mut runner = ngoai::Runner {
-                        giai_thich: explain_perms,
-                        cho_phep_proc: quyen.cho_phep_proc(),
-                        allow_proc: quyen.allow_proc(),
-                        ..ngoai::Runner::default()
-                    };
-                    let mut fs_tho = HostFs::tao(explain_perms, fs_mock.as_ref());
-                    let mut net_tho = HostNet::moi(explain_perms);
-                    let mut fs = quyen::FsGuard {
-                        trong: &mut fs_tho,
-                        quyen: &quyen,
-                    };
-                    let mut net = quyen::NetGuard {
-                        trong: &mut net_tho,
-                        quyen: &quyen,
-                    };
                     vis_interp::run_with_hosts_caps(
                         &text,
                         &h.hir,
@@ -461,20 +549,11 @@ pub fn run_run(rest: &[String]) -> ExitCode {
                         Some(&mut runner),
                         Some(&mut fs),
                         Some(&mut net),
+                        Some(&mut dbg),
                         &quyen.gia_tri(),
                     )
                 } else {
                     // ST-33: `.vis` cũng có `std.fs` (không có chương trình ngoài).
-                    let mut fs_tho = HostFs::tao(explain_perms, fs_mock.as_ref());
-                    let mut net_tho = HostNet::moi(explain_perms);
-                    let mut fs = quyen::FsGuard {
-                        trong: &mut fs_tho,
-                        quyen: &quyen,
-                    };
-                    let mut net = quyen::NetGuard {
-                        trong: &mut net_tho,
-                        quyen: &quyen,
-                    };
                     vis_interp::run_with_hosts_caps(
                         &text,
                         &h.hir,
@@ -484,15 +563,34 @@ pub fn run_run(rest: &[String]) -> ExitCode {
                         None,
                         Some(&mut fs),
                         Some(&mut net),
+                        Some(&mut dbg),
                         &quyen.gia_tri(),
                     )
                 };
-                let d: Vec<(String, u32, u32, String)> = out
+                // **VD-241 §9**: kết thúc **phiên** Host ⇒ đóng mọi connection còn mở
+                // (**không** auto-commit); rò chỉ cảnh báo ở chế độ diagnostics.
+                let con_mo = vis_interp::builtin::DbHost::db_cleanup(&mut dbg).unwrap_or(0);
+                if explain_perms && con_mo > 0 {
+                    eprintln!(
+                        "SQLITE leak: {con_mo} connection chưa đóng (đã đóng khi kết thúc phiên)"
+                    );
+                }
+                let d: Vec<(String, u32, u32, String, String)> = out
                     .diagnostics
                     .iter()
-                    .map(|x| (x.code.short.to_string(), x.line, x.col, x.message.clone()))
+                    .map(|x| {
+                        let (tep_that, line, col) =
+                            vi_tri_runtime(&file_rel, &loaded.files, &tep, x);
+                        (
+                            x.code.short.to_string(),
+                            line,
+                            col,
+                            x.message.clone(),
+                            tep_that,
+                        )
+                    })
                     .collect();
-                (out.stdout, d, out.steps, false)
+                (out.stdout, d, out.steps, false, out.exit)
             })
             .expect("không tạo được luồng chạy")
             .join()
@@ -511,15 +609,20 @@ pub fn run_run(rest: &[String]) -> ExitCode {
         if tap {
             eprintln!("ok 1 - {} (steps={})", tep, steps);
         }
-        ExitCode::from(0)
+        ExitCode::from(exit_val as u8)
     } else {
-        for (ma, line, col, msg) in &diags {
-            eprintln!("{tep}:{line}:{col}: error {ma}: {msg}");
+        for (ma, line, col, msg, tep_that) in &diags {
+            eprintln!("{tep_that}:{line}:{col}: error {ma}: {msg}");
         }
         if tap {
             eprintln!("not ok 1 - {} ({}, steps={})", tep, diags[0].0, steps);
         }
-        ExitCode::from(ma_thoat_khi_loi(&diags))
+        // `ma_thoat_khi_loi` có chữ ký cũ (4-tuple); bỏ trường tên tệp trước khi gọi.
+        let ma_loi: Vec<(String, u32, u32, String)> = diags
+            .iter()
+            .map(|(ma, line, col, msg, _)| (ma.clone(), *line, *col, msg.clone()))
+            .collect();
+        ExitCode::from(ma_thoat_khi_loi(&ma_loi))
     }
 }
 
@@ -619,5 +722,26 @@ fn main() -> ExitCode {
         Some("pkg") => pkg::run(&args[1..]),
         Some("fmt") => cli::fmt::run_fmt(&args[1..]),
         _ => usage(),
+    }
+}
+
+#[cfg(test)]
+mod st238_tests {
+    use super::*;
+
+    #[test]
+    fn probe_khong_nuot_loi_cu_phap() {
+        let bad = "fn main(:\n    print(\"x\")\n";
+        assert_eq!(
+            kiem_cu_phap_probe("bad.vis", bad, Mode::Script),
+            Some(ExitCode::from(2)),
+            "tệp sai cú pháp ⇒ exit 2"
+        );
+        let ok = "fn main():\n    print(\"x\")\n";
+        assert_eq!(
+            kiem_cu_phap_probe("ok.vis", ok, Mode::Script),
+            None,
+            "tệp hợp lệ ⇒ tiếp tục probe"
+        );
     }
 }

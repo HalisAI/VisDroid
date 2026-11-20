@@ -14,6 +14,19 @@ use std::process::Command;
 
 /// Bỏ **dòng SPDX đầu** của tệp kỳ vọng (QD §9.3 yêu cầu SPDX cho mọi tệp văn bản); phần còn lại
 /// vẫn được so **từng byte** với stdout.
+///
+/// PATH có thêm thư mục chứa `test-child` — cho fixture `.vish` gọi `test-child` bare.
+fn path_voi_tc() -> std::ffi::OsString {
+    let tc = std::path::Path::new(env!("CARGO_BIN_EXE_test-child"));
+    let mut muc: Vec<std::path::PathBuf> =
+        vec![tc.parent().expect("test-child parent").to_path_buf()];
+    let cur = std::env::var_os("PATH").unwrap_or_default();
+    for p in std::env::split_paths(&cur) {
+        muc.push(p);
+    }
+    std::env::join_paths(muc).expect("join PATH")
+}
+
 fn boc_spdx(t: &str) -> String {
     match t.strip_prefix("# SPDX-License-Identifier") {
         Some(rest) => match rest.find('\n') {
@@ -177,8 +190,26 @@ fn sem_323_ca_qua_binary() {
         // **SỬA KÈM LÝ DO (R2, VD-178)**: +**3** ca `optional/` (int-qhap-gan, map-get-lot,
         // t-qhap-generic) + **1** ca `loi/none-bo` (`VS0203`) ⇒ **469 ca**
         // (419 `.vis` + 50 `.vish`, **86** `.err`).
-        469,
-        "phải đúng 469 ca (419 `.vis` + 50 `.vish`), thật {} — nhóm: {theo_nhom:?}",
+        // **SỬA KÈM LÝ DO (VD-240-b, 2026-11-19)**: +**4** ca nhóm `async/` (**grid VD-240**:
+        // `grid-await-nghich-thu-tu`, `grid-chan-hai-task-kenh`, `grid-await-if`, `grid-kenh-list`)
+        // ⇒ **473 ca** (423 `.vis` + 50 `.vish`, **86** `.err`). Grid pin thứ tự thực thi
+        // run-to-completion một luồng: await quyết định thứ tự chạy; kênh FIFO; byte-identical hai engine.
+        // **SỬA KÈM LÝ DO (VD-241 §3, 2026-11-19)**: +**10** ca `optional/long-*` + `ban-ghi/field-optional`
+        //   (9 Option lồng xanh + 1 `long-no-pseudo` err) ⇒ **483 ca**
+        //   (**433 `.vis`** + 50 `.vish`, **89 `.err`**).
+        // **SỬA KÈM LÝ DO (VD-241 §7, 2026-11-19)**: +**4** ca xanh `optional/` (`long-reject-e` đổi thành
+        //   `long-none-e` **xanh** — `None` hợp lệ khi lớp **ngoài cùng** là `Option`, VD-238 sửa theo lệnh A0;
+        //   +`none-three-states`, `long-none-param`, `long-none-return`) ⇒ **486 ca**
+        //   (**436 `.vis`** + 50 `.vish`, **88 `.err`**).
+        // **SỬA KÈM LÝ DO (VD-241 đợt coercion, 2026-11-19)**: +1 xanh `optional/long-option-matrix.vis`
+        //   (ma trận Option lồng) ⇒ **487 ca** (**437 `.vis`** + 50 `.vish`, **88 `.err`**).
+        // **SỬA KÈM LÝ DO (VD-241 Gate 1, 2026-11-19)**: +**27** ca nhóm mới **`sqlite/`** (19 xanh,
+        //   8 `.err` VS0501) ⇒ **514 ca / 23 nhóm** (**464 `.vis`** + 50 `.vish`, **96 `.err`**).
+        // **SỬA KÈM LÝ DO (VD-241 pre-merge, 2026-11-19)**: +**11** ca `sqlite/` (`execute-tra-hang`,
+        //   `bind-inf`, ma trận authorizer 9 ca); mọi lỗi dữ liệu nay là `Result.Err` ⇒ 8 `.err` cũ đổi thành `.out`;
+        //   nhóm `sqlite/` không còn `.err` ⇒ **525 ca / 23 nhóm** (**475 `.vis`** + 50 `.vish`, **88 `.err`**).
+        525,
+        "phải đúng 525 ca (475 `.vis` + 50 `.vish`), thật {} — nhóm: {theo_nhom:?}",
         ds.len()
     );
     // **SỬA KÈM LÝ DO (ST-57)**: nhóm mới **`trait/`** ⇒ **19 nhóm**.
@@ -187,8 +218,8 @@ fn sem_323_ca_qua_binary() {
     // **SỬA KÈM LÝ DO (ST-72)**: nhóm mới **`cap/`** ⇒ **22 nhóm**.
     assert_eq!(
         theo_nhom.len(),
-        22,
-        "phải đúng 22 nhóm (ST-28 `generic`; ST-57 `trait`; ST-60 `async`; ST-61 `kenh`; ST-72 `cap`), thật {theo_nhom:?}"
+        23,
+        "phải đúng 23 nhóm (ST-28 `generic`; ST-57 `trait`; ST-60 `async`; ST-61 `kenh`; ST-72 `cap`; VD-241 Gate 1 `sqlite`), thật {theo_nhom:?}"
     );
     // **Chống bỏ ca**: số tệp `.vis` trên đĩa phải **bằng** số ca đã gom (không ca nào bị lọc mất).
     let tren_dia: usize = std::fs::read_dir(sem_dir())
@@ -220,6 +251,7 @@ fn sem_323_ca_qua_binary() {
     let mut sai = Vec::new();
     for c in &ds {
         let res = Command::new(vis())
+            .env("PATH", path_voi_tc())
             .arg("run")
             .arg("--tap")
             .arg(&c.vis)

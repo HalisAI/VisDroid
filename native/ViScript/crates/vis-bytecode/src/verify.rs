@@ -70,6 +70,18 @@ pub enum VerifyError {
         slot: u16,
         nlocals: u16,
     },
+    /// **ST-245**: ô vùng `GLOBAL_SLOT_BASE` vượt quá số global **thực tế** do module định nghĩa
+    /// (số ô global được ghi bởi `StoreLocal`/`Assign`/`BindLocal` trong toàn module).
+    /// `slot` ở đây là chỉ số **đã trừ** `GLOBAL_SLOT_BASE`.
+    GlobalOverflow {
+        func: u32,
+        pc: usize,
+        slot: u16,
+        nglobals: u16,
+    },
+    /// **ST-276 (VD-256)**: trailer bảng phí (`VFEE`) giải mã được nhưng sai định dạng.
+    /// Chỉ phát sinh ở cửa nạp có ngân sách (`load_verified_with_fee`); `verify` thường không đụng tới.
+    FeeDecode(String),
 }
 
 impl core::fmt::Display for VerifyError {
@@ -128,6 +140,16 @@ impl core::fmt::Display for VerifyError {
                 slot,
                 nlocals,
             } => write!(f, "hàm {func} pc {pc}: ô {slot} ngoài nlocals {nlocals}"),
+            VerifyError::GlobalOverflow {
+                func,
+                pc,
+                slot,
+                nglobals,
+            } => write!(
+                f,
+                "hàm {func} pc {pc}: ô global {slot} ngoài số global thực tế {nglobals}"
+            ),
+            VerifyError::FeeDecode(m) => write!(f, "bảng phí: {m}"),
         }
     }
 }
@@ -274,6 +296,14 @@ fn dich(pc: usize, off: i32, n: usize, func: u32) -> Result<usize, VerifyError> 
 }
 
 /// Số biến bắt **được dùng** (max `LoadCaptured` + 1) trong code của một hàm.
+///
+/// **ST-252 (VD-246)**: đây là một nửa của quan hệ **hàm đích – số capture – thao tác tạo
+/// closure** mà verifier kiểm được mà không cần metadata mới: tại mỗi `MakeClosure(fi, nfree)`,
+/// [`verify`] bắt `nfree ≥ captured_used(code[fi])` ([`VerifyError::ClosureFree`]). Chỉ số
+/// `LoadCaptured(s)` tự thân **không** được so với một con số do artifact tự khai — đó không phải
+/// là ràng buộc xác định được từ bytecode. Với `s = u16::MAX`, `saturating_add` chặn ở `u16::MAX`;
+/// nếu crafted bytecode khai `nfree = u16::MAX` thì verifier lọt ở mép này, nhưng runtime vẫn trap
+/// (xem `Vm::doc_captured`) — xem thêm ghi chú trong nhánh `LoadCaptured` của [`verify`].
 pub fn captured_used(code: &[Instr]) -> u16 {
     let mut m = 0u16;
     for i in code {
@@ -284,9 +314,17 @@ pub fn captured_used(code: &[Instr]) -> u16 {
     m
 }
 
-/// Xác minh **toàn bộ** module.
+/// Xác minh **toàn bộ** module. Đường mặc định chỉ nhận [`VERSION`] (2); artifact instrumented
+/// (trailer `VFEE`) mang `INSTRUMENTED_VERSION` (3) bị từ chối ở đây — xứng đáng, vì đường thường
+/// **không** charge và không được phép chạy artifact đòi budget.
 pub fn verify(m: &Module) -> Result<(), VerifyError> {
-    if m.version != VERSION {
+    verify_for_version(m, VERSION)
+}
+
+/// **VD-257 (stream B)** — xác minh module theo **phiên bản định dạng tường minh**.
+/// `verify` gọi với 2; cửa nạp có budget gọi với 3. Phần kiểm còn lại **dùng chung** (không copy).
+pub(crate) fn verify_for_version(m: &Module, expected: u16) -> Result<(), VerifyError> {
+    if m.version != expected {
         return Err(VerifyError::BadVersion(m.version));
     }
     if m.funcs.is_empty() {
@@ -299,6 +337,30 @@ pub fn verify(m: &Module) -> Result<(), VerifyError> {
     let nc = m.consts.len() as u32;
     // Bảng "biến bắt được dùng" của từng hàm (để kiểm `MakeClosure`).
     let used: Vec<u16> = m.funcs.iter().map(|f| captured_used(&f.code)).collect();
+    // **ST-245**: VBC1 không có trường `nglobals` (không đổi định dạng). Số global **thực tế**
+    // được **suy ra từ chính bytecode**: tập ô vùng `GLOBAL_SLOT_BASE` có lệnh ghi
+    // (`StoreLocal`/`Assign`/`BindLocal`) ở bất kỳ hàm nào. Codegen cấp ô liên tiếp từ
+    // `GLOBAL_SLOT_BASE` cho mỗi `let`/`var` cấp tệp và luôn phát một lệnh ghi khi định nghĩa
+    // (xem `codegen::slot_cua` + `gan_tu_dinh`), nên tập này khớp đúng số global của module.
+    // Miễn trừ `LocalOverflow` ở dưới **không** được phép biến đây thành "cứ ở trên 0x8000 là được".
+    let base = crate::format::GLOBAL_SLOT_BASE;
+    let mut stored_global: Vec<bool> = Vec::new();
+    for f in &m.funcs {
+        for ins in &f.code {
+            let s = match *ins {
+                Instr::StoreLocal(s) | Instr::Assign(s) | Instr::BindLocal(s) if s >= base => {
+                    s - base
+                }
+                _ => continue,
+            };
+            let k = s as usize;
+            if stored_global.len() <= k {
+                stored_global.resize(k + 1, false);
+            }
+            stored_global[k] = true;
+        }
+    }
+    let nglobals = stored_global.iter().filter(|&&b| b).count() as u16;
     for (fi, f) in m.funcs.iter().enumerate() {
         let func = fi as u32;
         if f.code.is_empty() {
@@ -311,7 +373,12 @@ pub fn verify(m: &Module) -> Result<(), VerifyError> {
                 spans: f.spans.len(),
             });
         }
-        if f.arity > f.nparams || f.nlocals < f.nparams {
+        // **ST-245**: `nlocals` không được vượt `GLOBAL_SLOT_BASE`, nếu không các ô cục bộ
+        // `[nparams, nlocals)` sẽ chìa sang vùng global ⇒ slot local "va vào" miền `0x8000`.
+        if f.arity > f.nparams
+            || f.nlocals < f.nparams
+            || f.nlocals > crate::format::GLOBAL_SLOT_BASE
+        {
             return Err(VerifyError::BadArity {
                 func,
                 arity: f.arity,
@@ -375,19 +442,45 @@ pub fn verify(m: &Module) -> Result<(), VerifyError> {
                 | Instr::StoreLocal(s)
                 | Instr::Assign(s)
                 | Instr::BindLocal(s) => {
-                    if s >= f.nlocals {
-                        return Err(VerifyError::LocalOverflow {
+                    // **ST-238 (VD-242, ca 3)**: ô `>= GLOBAL_SLOT_BASE` là biến cấp tệp, do VM
+                    // ánh xạ tới kho chung — không tính vào `nlocals` của khung.
+                    // **ST-245**: miễn trừ đó chỉ áp dụng cho ô **trong miền global thực tế**:
+                    // `s - GLOBAL_SLOT_BASE` phải nhỏ hơn số global module thực sự định nghĩa.
+                    // Bytecode sai (ô `0x8000..=0xFFFF` không có lệnh ghi tương ứng) bị từ chối
+                    // trước khi VM kịp đọc `Unit`/`resize` kho — không "vượt kiểm tra".
+                    if s < base {
+                        if s >= f.nlocals {
+                            return Err(VerifyError::LocalOverflow {
+                                func,
+                                pc,
+                                slot: s,
+                                nlocals: f.nlocals,
+                            });
+                        }
+                    } else if s - base >= nglobals {
+                        return Err(VerifyError::GlobalOverflow {
                             func,
                             pc,
-                            slot: s,
-                            nlocals: f.nlocals,
+                            slot: s - base,
+                            nglobals,
                         });
                     }
                 }
-                Instr::LoadCaptured(s) => {
-                    if s >= f.nparams.max(f.nlocals) {
-                        // Biến bắt nằm ngoài khung: kiểm qua `MakeClosure` của nơi tạo.
-                    }
+                Instr::LoadCaptured(_) => {
+                    // **ST-252 (VD-246)** — verifier **không** so chỉ số `LoadCaptured` với một con
+                    // số tự khai trong artifact. Hàng rào tĩnh duy nhất là `ClosureFree` ở mỗi
+                    // `MakeClosure(fi, nfree)` ở trên: `nfree` phải ≥ `captured_used(code[fi])` =
+                    // `max(LoadCaptured) + 1` của hàm đích — kiểm đúng quan hệ **hàm đích – số
+                    // capture – thao tác tạo closure** từ bytecode + metadata closure hiện có.
+                    //
+                    // **Giới hạn verifier (ghi rõ cho A0, VD-246 §1)**:
+                    // (a) hàm `entry` hoặc hàm chỉ được gọi thẳng bằng `Call` (không qua
+                    //     `MakeClosure`) không có địa điểm tạo closure để so ⇒ verifier không từ
+                    //     chối; runtime là hàng rào cuối (`Vm::doc_captured` trap có chẩn đoán).
+                    // (b) `captured_used` trả `u16`, nên với `LoadCaptured(u16::MAX)` giá trị bị
+                    //     chặn ở `u16::MAX`; crafted bytecode khai `MakeClosure(fi, u16::MAX)` lọt
+                    //     verifier ở mép này, runtime vẫn trap.
+                    // Không mở phân tích liên hàm / đổi định dạng khi chưa báo A0.
                 }
                 Instr::Jump(off)
                 | Instr::JumpIfFalse(off)

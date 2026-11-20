@@ -124,10 +124,23 @@ fn kieu_ty(t: &vis_types::stdlib::Ty) -> String {
         Ty::Bool => "bool".to_string(),
         Ty::ListStr => "list[str]".to_string(),
         Ty::FnKhoa => "fn(T) -> int | str".to_string(),
-        Ty::ResultStrStr => "Result[str, str]".to_string(),
-        Ty::ResultUnitStr => "Result[(), str]".to_string(),
-        Ty::ResultListStrStr => "Result[list[str], str]".to_string(),
-        Ty::ResultHead => "Result[map[str, {error}], str]".to_string(),
+        Ty::ResultStrStr => "Result[str, Error]".to_string(),
+        Ty::ResultUnitStr => "Result[(), Error]".to_string(),
+        Ty::ResultListStrStr => "Result[list[str], Error]".to_string(),
+        Ty::ResultHead => "Result[map[str, {error}], Error]".to_string(),
+        // **VD-222 (18/11/2026, uỷ quyền A0-proxy)**: lỗi std → bản ghi dựng sẵn `Error`
+        // (`RecId(0)`); `std.json.decode` → `Result[Json, Error]` (enum dựng sẵn `EnumId(0)`).
+        Ty::Error => "Error".to_string(),
+        Ty::Json => "Json".to_string(),
+        Ty::ResultJsonErr => "Result[Json, Error]".to_string(),
+        // **VD-241 Gate 1 (2026-11-19)** — variant mới của `std.sqlite` MVP (prototype nội bộ).
+        // CHỈ thêm arm render kiểu này — **không** đổi logic so khớp, **không** regen tệp đóng băng;
+        // `agent/API-STD.txt` giữ nguyên cho tới cổng tích hợp phê duyệt chữ ký (VD-241 §11).
+        Ty::SqlValue => "SqlValue".to_string(),
+        Ty::RowSet => "RowSet".to_string(),
+        Ty::ResultIntErr => "Result[int, Error]".to_string(),
+        Ty::ResultBoolErr => "Result[bool, Error]".to_string(),
+        Ty::ResultRowSetErr => "Result[RowSet, Error]".to_string(),
         // Biến kiểu: `T`/`K`/`V` — **cùng** tên với `Ty::sang_type` để chữ ký không mơ hồ.
         Ty::Var(i) => vis_types::stdlib::ten_bien(*i).to_string(),
         Ty::List(t) => format!("list[{}]", kieu_ty(t)),
@@ -159,7 +172,7 @@ fn ds_std() -> DanhSach {
 fn api_std_khop_code() {
     so_khop(
         "API-STD.txt",
-        "ĐÓNG BĂNG API std — sinh từ crates/vis-types/src/stdlib.rs::FUNCS (kèm chữ ký).",
+        "ĐÓNG BĂNG API std — sinh từ crates/vis-types/src/stdlib.rs::FUNCS (kèm chữ ký).\n# VD-222 (18/11/2026, uỷ quyền A0, Agent 1 thay mặt Agent 0): mọi `Result[_, str]` →\n# `Result[_, Error]` (lỗi std = bản ghi dựng sẵn `Error { message, source, span }`);\n# `json.decode` → `Result[Json, Error]`. Các mục đổi được nêu đích danh trong VD-222.\n# VD-231 (19/11/2026, A0 chốt — ratify): `span` là **[không ổn định]** — sau này đổi sang Span\n# có cấu trúc sẽ phá API; `AnyError` = alias của bản ghi `Error` (RecId(0)), không phải\n# `{error}` nữa (lỗi tĩnh được bắt thay vì bị nuốt).",
         ds_std(),
     );
 }
@@ -185,7 +198,7 @@ fn ds_ma() -> DanhSach {
 fn api_codes_khop_code() {
     so_khop(
         "API-CODES.txt",
-        "ĐÓNG BĂNG sổ mã chẩn đoán — sinh từ crates/vis-diag/src/lib.rs::all_codes().",
+        "ĐÓNG BĂNG sổ mã chẩn đoán — sinh từ crates/vis-diag/src/lib.rs::all_codes().\n# VD-224 (2026-11-19, uỷ quyền A0-proxy): +**VS0211** (tên trùng module std đã import; cảnh báo);\n# VD-223 (proxy A0): +**VS0209** (proxy — **huỷ ở VD-224**, `--b` hợp lệ mọi hàm); huỷ VS0111 (VD-212).",
         ds_ma(),
     );
 }

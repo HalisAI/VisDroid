@@ -13,14 +13,14 @@
 //!
 //! # Phân tầng
 //!
-//! [`mod`]: khung + môi trường + câu lệnh; [`num`]: bảng toán tử số học/so sánh; [`expr`]: biểu
-//! thức; [`pat`]: pattern + **xét hết**.
+//! [`mod`]: khung/môi trường/câu lệnh · [`num`]: bảng toán tử số học/so sánh · [`expr`]: biểu thức · [`pat`]: pattern + **xét hết**.
 
 mod expr;
 mod num;
 mod pat;
 mod sig;
 mod truong;
+mod vd238;
 
 use std::collections::HashSet;
 
@@ -146,11 +146,6 @@ pub fn check(hir: &Hir, symbols: &Symbols, types: &TypeTable) -> CheckOutput {
     let mut c = Checker::new(symbols, types);
     c.run(hir);
     c.finish()
-}
-
-/// `true` nếu biểu thức là **literal số nguyên** (§3.5: chỉ literal được nâng `int → float`).
-pub(crate) fn is_int_lit(e: &HExpr) -> bool {
-    matches!(e, HExpr::Lit { lit, .. } if lit.kind == crate::hir::LitKind::Int)
 }
 
 pub(crate) struct Checker<'a> {
@@ -441,12 +436,16 @@ impl<'a> Checker<'a> {
         let (Some(rx), Some(ry)) = (self.types.rec(x), self.types.rec(y)) else {
             return false;
         };
+        // **VD-241 §6/B-B (A0, 2026-11-19)** — bản ghi so khớp theo **tên trường**; thứ tự khai báo
+        // không quyết định (`{b: 1, a: "s"}` ≡ `{a: "s", b: 1}`).
         rx.fields.len() == ry.fields.len()
-            && rx
-                .fields
-                .iter()
-                .zip(ry.fields.iter())
-                .all(|(f, g)| f.name == g.name && self.same(&f.ty, &g.ty))
+            && rx.fields.iter().all(|af| {
+                ry.fields
+                    .iter()
+                    .find(|bf| bf.name == af.name)
+                    .map(|bf| self.same(&af.ty, &bf.ty))
+                    .unwrap_or(false)
+            })
     }
 
     /// Ép `from` về `to` **có báo lỗi**: tự nâng `T → T?`, literal `int` ở vị trí `float` (§3.5).
@@ -472,8 +471,9 @@ impl<'a> Checker<'a> {
         if self.same(from, to) {
             return true;
         }
-        // **R2 (VD-178)**: tự nâng **nhiều lớp** `T → T? → T??` (tĩnh-only, không đổi biểu diễn).
-        // Bóc `f` lớp `Opt` ở vế nguồn và `t` lớp ở đích; chấp nhận khi lõi khớp và `f ≤ t`.
+        // **VD-241 §3 (A0)**: nâng **một lớp** duy nhất ở chuyển đổi annot/đối số/return;
+        // `T??` = `Option[Option[T]]`; chấp nhận khi lõi khớp, đích ≥ 1 lớp `Opt`,
+        // `from_layers == to_layers - 1`.
         let mut from_peel = from;
         let mut from_layers = 0usize;
         while let Type::Opt(inner) = from_peel {
@@ -486,7 +486,7 @@ impl<'a> Checker<'a> {
             to_layers += 1;
             to_peel = inner;
         }
-        if to_layers > 0 && self.same(from_peel, to_peel) && from_layers <= to_layers {
+        if to_layers >= 1 && from_layers == to_layers - 1 && self.same(from_peel, to_peel) {
             return true;
         }
         // ST-12b (BLOCKER #2): **không** nâng `int → float` đại trà — chỉ literal số nguyên
@@ -520,7 +520,19 @@ impl<'a> Checker<'a> {
     /// Ép kiểu **có biết biểu thức nguồn**: chỉ nâng `int → float` khi nguồn là **literal** số
     /// nguyên (§3.5, ngoại lệ duy nhất của "không chuyển đổi ngầm").
     pub(crate) fn coerce_e(&mut self, e: &HExpr, from: &Type, to: &Type, what: &str) -> bool {
-        if matches!((from, to), (Type::Int, Type::Float)) && is_int_lit(e) {
+        // **VD-238** (giữ) + **VD-241 §7**: `None` hợp lệ khi kiểu đích **ngoài cùng** là `Option`.
+        if vd238::la_none_bare(e) && !vd238::la_none_dich_opt(to) {
+            self.diag(
+                MISMATCH,
+                format!(
+                    "`{what}`: `None` chỉ gán được cho `T?`, được `{}` (VD-238)",
+                    self.types.show(to)
+                ),
+                e.span(),
+            );
+            return false;
+        }
+        if matches!((from, to), (Type::Int, Type::Float)) && vd238::is_int_lit(e) {
             return true;
         }
         // ST-35: `Or.Trai(1)` gán vào `Or[int, str]` — kiểm **đối số biến thể** theo bản
@@ -622,6 +634,15 @@ impl<'a> Checker<'a> {
             return self.resolve_cap(args, span);
         }
         let resolved: Vec<Type> = args.iter().map(|a| self.resolve_ann(a, span)).collect();
+        // **VD-222** — Json=EnumId(0)·Error=RecId(0)·AnyError=RecId(0) (VD-231).
+        if args.is_empty() {
+            match name {
+                "Json" => return Type::Enum(crate::ty::EnumId(0)),
+                "Error" => return Type::Record(crate::ty::RecId(0)),
+                "AnyError" => return Type::Record(crate::ty::RecId(0)), // VD-231 alias Error
+                _ => {}
+            }
+        }
         match (name, resolved.len()) {
             ("list", 1) => return Type::List(Box::new(resolved[0].clone())),
             ("map", 2) => {
@@ -689,9 +710,8 @@ impl<'a> Checker<'a> {
                 args: resolved,
             };
         }
-        // VD-48(a): kiểu **ngoài VS0** (`AnyError`, `cap`, `ref`, `Json`, `set`, `stream`, …) vẫn
-        // là `VS0301` nhưng thông điệp phải nói rõ "không có ở VS0 (vis-std/vòng 2)".
-        let msg = if la_kieu_ngoai_vs0(name) {
+        // VD-48(a): kiểu **ngoài VS0** (`ref`, `set`, `stream`, …) vẫn là `VS0301` (thông điệp nói rõ "chưa hỗ trợ (VD-43)").
+        let msg = if vd238::la_kieu_ngoai_vs0(name) {
             format!(
                 "kiểu `{name}` chưa hỗ trợ — thuộc vis-std/vòng 2; dùng kiểu khác hoặc bỏ chú thích"
             )
@@ -915,7 +935,22 @@ impl<'a> Checker<'a> {
     /// Kiểm một **thân** (suite) và ép kiểu giá trị về `want`.
     pub(crate) fn kiem_than(&mut self, body: &[HStmt], want: &Type, span: Span) {
         let at = body.last().map(HStmt::span).unwrap_or(span);
+        // **VD-238**: `fn f() -> int: None` — thân cuối là `None` trần ⇒ lỗi tĩnh khi lớp **ngoài cùng** của `want` không phải `Option`.
+        let last_is_none =
+            matches!(body.last(), Some(crate::hir::HStmt::Expr(e)) if vd238::la_none_bare(e));
         let t = self.than_value(body);
+        // **VD-241 §7 (A0, 2026-11-19)**: `None` trả về hợp lệ khi `want` **ngoài cùng** là `Option`.
+        if last_is_none && !vd238::la_none_dich_opt(want) {
+            self.diag(
+                MISMATCH,
+                format!(
+                    "`return`: `None` chỉ hợp lệ ở `T?`, được `{}` (VD-238)",
+                    self.types.show(want)
+                ),
+                at,
+            );
+            return;
+        }
         if !want.is_error() {
             self.coerce(&t, want, at, "giá trị trả về");
         }
@@ -1018,7 +1053,7 @@ impl<'a> Checker<'a> {
                             crate::hir::AssignOp::FloorDiv => crate::hir::BinOp::FloorDiv,
                             _ => crate::hir::BinOp::Rem,
                         };
-                        let v_lit = is_int_lit(value);
+                        let v_lit = vd238::is_int_lit(value);
                         if let Some(res) = num::so_hoc(op2, &wanted, &got, false, v_lit) {
                             self.coerce(&res, &wanted, value.span(), "gán ghép");
                         } else if op2 == crate::hir::BinOp::FloorDiv {
@@ -1076,8 +1111,8 @@ impl<'a> Checker<'a> {
                 Type::Unit
             }
             HStmt::While { cond, body, .. } => {
-                let t = self.kiem_expr(cond);
-                self.coerce_cond(cond, &t, "điều kiện `while`");
+                // **ST-226 (R18b)**: `while let` dùng chung `kiem_cond` với `if let`.
+                self.kiem_cond(cond);
                 self.kiem_than_bo(body);
                 Type::Unit
             }
@@ -1094,7 +1129,17 @@ impl<'a> Checker<'a> {
                 match value {
                     Some(e) => {
                         let t = self.kiem_expr(e);
-                        if !want.is_error() {
+                        // **VD-238** (giữ) + **VD-241 §7**: `None` trả về hợp lệ khi kiểu đích **ngoài cùng** là `Option`.
+                        if vd238::la_none_bare(e) && !vd238::la_none_dich_opt(&want) {
+                            self.diag(
+                                MISMATCH,
+                                format!(
+                                    "`return`: `None` chỉ hợp lệ ở `T?`, được `{}` (VD-238)",
+                                    self.types.show(&want)
+                                ),
+                                *span,
+                            );
+                        } else if !want.is_error() {
                             self.coerce(&t, &want, *span, "`return`");
                         }
                     }
@@ -1107,7 +1152,10 @@ impl<'a> Checker<'a> {
                 // ST-13b (mục 1): `return` **phân kỳ** — kiểu `never`, nhận mọi kiểu trả về.
                 Type::Never
             }
-            HStmt::Break { .. } | HStmt::Continue { .. } => Type::Unit,
+            HStmt::Break { .. } | HStmt::Continue { .. } => {
+                // **VD-241 §6/B-A**: `break`/`continue` phân kỳ như `return` ⇒ `Never`, nhận mọi kiểu.
+                Type::Never
+            }
             HStmt::Match {
                 subject,
                 arms,
@@ -1116,6 +1164,7 @@ impl<'a> Checker<'a> {
                 let subj = self.kiem_expr(subject);
                 let mut acc: Option<Type> = None;
                 for arm in arms {
+                    self.kiem_or_bind(&arm.pat, arm.guard.as_ref(), &arm.body); // ST-239 §3.1
                     self.bind_pat(&arm.pat, &subj);
                     if let Some(g) = &arm.guard {
                         let gt = self.kiem_expr(g);
@@ -1217,9 +1266,9 @@ impl<'a> Checker<'a> {
                 // **ST-60b**: gốc đi **xuống** qua `Field`/`Index` (`p.xs`/`self.xs`) — bất biến là
                 // thuộc tính của **gốc**; đích **lồng** (gốc `var`) báo đúng là **lồng**, không báo
                 // oan "let/tham số".
-                let goc = goc_dich(target);
+                let goc = vd238::goc_dich(target);
                 let mutable = goc.map(|id| self.is_mutable(id)).unwrap_or(false);
-                if !dich_ha_duoc(target) && !matches!(&**base, HExpr::Var { .. }) {
+                if !vd238::dich_ha_duoc(target) && !matches!(&**base, HExpr::Var { .. }) {
                     let msg = match goc {
                         Some(id) if !self.is_mutable(id) => GAN_TRUONG_LET,
                         Some(_) => GAN_LONG,
@@ -1311,9 +1360,9 @@ impl<'a> Checker<'a> {
                 }
                 // **ST-60b**: gốc đi xuống qua `Field` (`p.xs[0] = 9`, `self.xs[0] = 9`); đích **lồng**
                 // (`x[i][j]`, `x.f[0][1]`) báo **lồng** khi gốc **đã** là `var`.
-                let goc = goc_dich(target);
+                let goc = vd238::goc_dich(target);
                 let mutable = goc.map(|id| self.is_mutable(id)).unwrap_or(false);
-                if !dich_ha_duoc(target) {
+                if !vd238::dich_ha_duoc(target) {
                     let msg = match goc {
                         Some(id) if !self.is_mutable(id) => GAN_PHAN_TU_LET,
                         Some(_) => GAN_LONG,
@@ -1366,7 +1415,7 @@ impl<'a> Checker<'a> {
                 } => {
                     // **ST-60b**: gốc đi **xuống** qua `Field`/`Index` (không chỉ `Var` trực tiếp).
                     let goc_la_var = |t: &HExpr| {
-                        goc_dich(t)
+                        vd238::goc_dich(t)
                             .map(|id| duoc_gan.contains(&id))
                             .unwrap_or(false)
                     };
@@ -1384,7 +1433,7 @@ impl<'a> Checker<'a> {
                         HExpr::Field { .. } => {
                             if gan_ghep {
                                 self.diag(MISMATCH, GAN_GHEP, *span);
-                            } else if !dich_ha_duoc(target) {
+                            } else if !vd238::dich_ha_duoc(target) {
                                 if goc_la_var(target) {
                                     self.diag(MISMATCH, GAN_LONG, *span);
                                 } else {
@@ -1397,7 +1446,7 @@ impl<'a> Checker<'a> {
                         HExpr::Index { .. } => {
                             if gan_ghep {
                                 self.diag(MISMATCH, GAN_GHEP, *span);
-                            } else if !dich_ha_duoc(target) {
+                            } else if !vd238::dich_ha_duoc(target) {
                                 if goc_la_var(target) {
                                     self.diag(MISMATCH, GAN_LONG, *span);
                                 } else {
@@ -1449,45 +1498,3 @@ const GAN_PHAN_TU_LET: &str = "chỉ gán được phần tử của `var` — `
 /// **hình dạng đích**, không phải do bất biến; nêu đúng vậy thay vì báo oan "let/tham số".
 const GAN_LONG: &str =
     "gán **lồng** (`x.f[i]`/`x[i][j]`/`x.f.g`) chưa hỗ trợ — gán lại cả biến `var` bằng `with`/giá trị mới (§4.1)";
-
-/// **ST-60b**: gốc của **đích gán** — đi xuống qua `Field`/`Index` tới `Var`.
-fn goc_dich(t: &HExpr) -> Option<u32> {
-    match t {
-        HExpr::Var { sym, .. } => *sym,
-        HExpr::Field { base, .. } | HExpr::Index { base, .. } => goc_dich(base),
-        _ => None,
-    }
-}
-
-/// **ST-60b**: đích mà **codegen** hạ được: biến; **một** tầng trường (`x.f`); **một** chỉ số trên
-/// biến (`x[i]`); hoặc **một** chỉ số trên **một** tầng trường (`x.f[i]`). Sâu hơn ⇒ `GAN_LONG`.
-fn dich_ha_duoc(t: &HExpr) -> bool {
-    match t {
-        HExpr::Var { sym: Some(_), .. } => true,
-        HExpr::Field { base, .. } => matches!(&**base, HExpr::Var { sym: Some(_), .. }),
-        HExpr::Index { base, .. } => match &**base {
-            HExpr::Var { sym: Some(_), .. } => true,
-            HExpr::Field { base: b2, .. } => matches!(&**b2, HExpr::Var { sym: Some(_), .. }),
-            _ => false,
-        },
-        _ => false,
-    }
-}
-
-/// Kiểu **không thuộc VS0** (VD-48(a)) — vẫn `VS0301` nhưng thông điệp nêu rõ vis-std/vòng 2.
-fn la_kieu_ngoai_vs0(name: &str) -> bool {
-    matches!(
-        name,
-        "AnyError"
-            | "cap"
-            | "ref"
-            | "weak"
-            | "Json"
-            | "set"
-            | "stream"
-            | "Future"
-            | "datetime"
-            | "bigint"
-            | "decimal"
-    )
-}

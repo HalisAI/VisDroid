@@ -13,17 +13,31 @@ set -u
 # không xoá ca, không nới ngưỡng; macOS/Linux vốn đã UTF-8 nên không đổi hành vi.
 export PYTHONIOENCODING=utf-8
 export PYTHONUTF8=1
+# **SỬA KÈM LÝ DO (verify psvn)**: gawk trên Git Bash (MINGW) không khớp regex UTF-8
+# (`/cú pháp sai/` trong rule R6) khi `LC_ALL` rỗng ⇒ R6 báo oan 8 dòng trong
+# `docs/R30-MAU-2026-11-18.md`. Ép `C.UTF-8` (có trên cả ps/mps/psvn) để phần miễn
+# trừ hoạt động; chỉ đặt khi `LC_ALL`chưa có giá trị — không đè lựa chọn người dùng.
+export LC_ALL="${LC_ALL:-C.UTF-8}"
 VIS_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 REPO_ROOT="$VIS_ROOT"
 MANIFEST="$VIS_ROOT/Cargo.toml"
 fails=0
 
-find_cargo() {
-    if command -v cargo >/dev/null 2>&1; then command -v cargo; return 0; fi
-    if [ -x "$HOME/.cargo/bin/cargo" ]; then echo "$HOME/.cargo/bin/cargo"; return 0; fi
-    return 1
-}
-CARGO="$(find_cargo || true)"
+# **VD-241 §3/T6 + nợ #185** — chọn cargo theo helper dùng chung với `bin/vis`.
+# Không hardcode ưu tiên ~/.cargo/bin; in rõ người được chọn + yêu cầu.
+# shellcheck source=_vis-toolchain.sh
+source "$VIS_ROOT/bin/_vis-toolchain.sh"
+CARGO="$(vis_find_cargo "vis-dev")" || exit 78
+if [ -n "$CARGO" ]; then
+    # Các bước python bên trong (doc-examples, check_report, fixture) gọi plain `cargo`;
+    # đặt thư mục của cargo được chọn ở **đầu** PATH để cả cây con thấy bản đúng.
+    CARGO_DIR="$(dirname "$CARGO")"
+    case ":$PATH:" in
+        *":$CARGO_DIR:"*) ;;
+        *) export PATH="$CARGO_DIR:$PATH" ;;
+    esac
+    echo "vis-dev: chọn cargo $CARGO ($(vis_semver_of "$CARGO" || true); yêu cầu ≥ $(vis_required_rust_version))" >&2
+fi
 relpath() {
     case "$1" in
         "$VIS_ROOT"/*) printf '%s' "${1#"$VIS_ROOT"/}" ;;
@@ -288,7 +302,7 @@ run_rules() {
 }
 
 usage() {
-    echo "dùng: vis-dev <check|gate --fast|nightly [--fuzz-minutes N]|doc-examples [--root DIR]|rules [--root DIR]>" >&2
+    echo "dùng: vis-dev <check|gate --fast|nightly [--fuzz-minutes N] [--skip-gate]|doc-examples [--root DIR]|rules [--root DIR]>" >&2
     exit 2
 }
 
@@ -310,6 +324,24 @@ do_doc_examples() {
     if [ -n "$root" ]; then args+=(--root "$root"); fi
     if [ "${3:-}" = "--temp-root" ]; then args+=(--temp-root); fi
     if ! "$py" "$VIS_ROOT/test/doc-examples/doc_examples.py" "${args[@]}"; then
+        return 1
+    fi
+}
+
+do_readme_examples() {
+    # Khối mã trong README/CHEAT-SHEET không nằm trong cổng QD §7.4 (doc_examples.py
+    # chỉ quét docs/*.md) ⇒ cần bước riêng, không đụng vào số liệu Agent 0 của cổng đó.
+    local py="${1:-}"
+    if [ -z "$py" ]; then
+        for c in python3.12 python3.11 python3; do
+            if command -v "$c" >/dev/null 2>&1; then py="$c"; break; fi
+        done
+    fi
+    if [ -z "$py" ]; then
+        echo "vis-dev: không thấy python3 cho bước readme-examples" >&2
+        return 1
+    fi
+    if ! "$py" "$VIS_ROOT/test/readme-examples.py"; then
         return 1
     fi
 }
@@ -363,12 +395,32 @@ do_check() {
         echo "--- doc-examples: FAIL" >&2
         return 1
     fi
+    if ! do_readme_examples "$PY"; then
+        echo "--- readme-examples: FAIL" >&2
+        return 1
+    fi
+    echo "--- readme-examples: OK"
     echo "vis-dev check: PASS"
+}
+
+# L0 test — **TỐI ƯU (ST-258)**: `cargo test` chạy các test binary tuần tự (đo 43,78 s với
+# 1435 test/12 core). `cargo nextest run` chạy song song, mỗi ca một process ⇒ ~8,4 s, nhưng
+# **không chạy doc-test** ⇒ phải thêm `cargo test --doc` (5 ca). Tổng 1430+5 = 1435 như cũ.
+# nextest là tuỳ chọn: máy chưa cài thì fallback y hệt lệnh cũ; `VIS_NO_NEXTEST=1` để tắt khi
+# cần đối chiếu. Không đổi kỳ vọng, không bỏ ca, không đổi mã thoát.
+run_l0_tests() {
+    if [ "${VIS_NO_NEXTEST:-0}" != "1" ] && command -v cargo-nextest >/dev/null 2>&1; then
+        echo "--- L0 test: cargo-nextest (song song) + doc-test"
+        "$CARGO" nextest run --manifest-path "$MANIFEST" --workspace &&
+            "$CARGO" test --manifest-path "$MANIFEST" --workspace --doc
+        return $?
+    fi
+    "$CARGO" test --manifest-path "$MANIFEST" --workspace
 }
 
 do_gate_fast() {
     do_check || return 1
-    if ! "$CARGO" test --manifest-path "$MANIFEST" --workspace; then
+    if ! run_l0_tests; then
         echo "--- L0 test: FAIL" >&2; return 1
     fi
     echo "--- L0 test: OK"
@@ -376,40 +428,45 @@ do_gate_fast() {
 }
 
 # Vòng tròn fmt: `vis fmt` phải **bất động** (fmt(fmt(x)) == fmt(x)) trên mọi ca ngữ nghĩa.
+# **TỐI ƯU (ST-257)**: bản cũ gọi `vis fmt` **2 lần cho mỗi tệp** — 475 tệp ⇒ ~950 lần spawn
+# tiến trình (macOS phạt spawn ~9,6×, xem comment R1..R6 ở đầu tệp). Nay copy ca vào một thư
+# mục tạm rồi dùng **đúng 2 lệnh**: `fmt --write <tmp>` cho `a := fmt(f)`, `fmt --check <tmp>`
+# so `fmt(a)` với `a`. Phép kiểm/ngưỡng/số tệp/câu chữ giữ nguyên; chỉ giảm số lần spawn.
 do_vong_tron_fmt() {
     local vis="$VIS_ROOT/target/debug/vis"
     if [ ! -x "$vis" ]; then
         echo "--- vòng tròn fmt: FAIL (chưa có $vis — chạy build trước)" >&2
         return 1
     fi
-    local n=0 bad=0 bo_qua=0
-    local tmp
-    tmp="$(mktemp "${TMPDIR:-/tmp}/visfmt.XXXXXX.vis")" || return 1
+    local n=0 bad=0 bo_qua=0 copied=0
+    local tmp f rel name
+    tmp="$(mktemp -d "${TMPDIR:-/tmp}/visfmt.XXXXXX")" || return 1
     while IFS= read -r -d '' f; do
         n=$((n + 1))
-        local a b
         # Ca **cố ý hỏng cú pháp** (có `.err`) thì `vis fmt` phải lỗi — bỏ qua, không tính là hỏng.
         if [ -f "${f%.vis}.err" ]; then
             bo_qua=$((bo_qua + 1))
             continue
         fi
-        if ! a="$("$vis" fmt "$f" 2>/dev/null)"; then
-            echo "--- fmt lỗi trên $f" >&2
+        rel="${f#"$VIS_ROOT"/test/sem/}"
+        name="${rel//\//__}"
+        if ! cp "$f" "$tmp/$name" 2>/dev/null; then
+            echo "--- vòng tròn fmt: không copy được $f" >&2
             bad=$((bad + 1))
             continue
         fi
-        printf '%s\n' "$a" >"$tmp"
-        if ! b="$("$vis" fmt "$tmp" 2>/dev/null)"; then
-            echo "--- fmt lỗi vòng 2 trên $f" >&2
-            bad=$((bad + 1))
-            continue
-        fi
-        if [ "$a" != "$b" ]; then
-            echo "--- vòng tròn fmt: KHÔNG bất động: $f" >&2
-            bad=$((bad + 1))
-        fi
+        copied=$((copied + 1))
     done < <(find "$VIS_ROOT/test/sem" -type f -name '*.vis' -print0 2>/dev/null)
-    rm -f "$tmp"
+    if [ "$copied" -gt 0 ]; then
+        if ! "$vis" fmt --write "$tmp" >/dev/null 2>&1; then
+            echo "--- vòng tròn fmt: FAIL (fmt --write trên bản sao)" >&2
+            bad=$((bad + 1))
+        elif ! "$vis" fmt --check "$tmp" >/dev/null 2>&1; then
+            echo "--- vòng tròn fmt: KHÔNG bất động (fmt --check trên bản sao)" >&2
+            bad=$((bad + 1))
+        fi
+    fi
+    rm -rf "$tmp"
     if [ "$bad" -ne 0 ]; then
         echo "--- vòng tròn fmt: FAIL ($bad/$n tệp, bỏ qua $bo_qua)" >&2
         return 1
@@ -438,12 +495,19 @@ do_fuzz_parser() {
 
 do_nightly() {
     local phut=2
+    local bo_qua_gate=0
     local i=2
     while [ "$i" -le "$#" ]; do
         case "${!i}" in
             --fuzz-minutes)
                 i=$((i + 1))
                 phut="${!i:-}"
+                ;;
+            # **ST-257**: khi đã chạy `gate --fast` ngay trước đó, bỏ qua lần chạy lại —
+            # `cargo test --workspace` chiếm ~44 s (đo hôm nay). Cờ này **chỉ** bỏ bước gate;
+            # fuzz và vòng tròn fmt vẫn chạy đủ. Không đổi hành vi mặc định.
+            --skip-gate)
+                bo_qua_gate=1
                 ;;
             *)
                 echo "vis-dev: nightly không hiểu \`${!i}\`" >&2
@@ -458,7 +522,11 @@ do_nightly() {
             return 2
             ;;
     esac
-    do_gate_fast || return 1
+    if [ "$bo_qua_gate" -eq 0 ]; then
+        do_gate_fast || return 1
+    else
+        echo "--- gate --fast: BỎ QUA (--skip-gate; fuzz + vòng tròn fmt vẫn chạy)"
+    fi
     do_fuzz_parser "$phut" || return 1
     do_vong_tron_fmt || return 1
     echo "vis-dev nightly: PASS"

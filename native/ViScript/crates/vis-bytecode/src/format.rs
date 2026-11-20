@@ -5,7 +5,7 @@
 //!
 //! ```text
 //! magic      : 4 byte  = "VBC1"
-//! version    : u16     = 1
+//! version    : u16     = 2 (ST-246/VD-244; trước đó 1 — xem [`VERSION`])
 //! hash nguồn : 32 byte = **SHA-256** (ST-30; trước đó là FNV-1a × 4 seed —
 //!                        xem cảnh báo dưới)
 //! n_const    : u32, rồi từng hằng: tag u8 + độ dài u32 + bytes (xem [`Const`])
@@ -33,12 +33,65 @@
 
 use vis_types::{BinOp, UnOp};
 
-/// Bốn byte nhận dạng: `VBC1`.
+/// Bốn byte nhận dạng: `VBC1` — **không đổi** ở ST-246/VD-244 (trường `VERSION` đủ để phân biệt).
 pub const MAGIC: [u8; 4] = *b"VBC1";
 /// Phiên bản định dạng hiện tại.
-pub const VERSION: u16 = 1;
+///
+/// **ST-246 (VD-244 §2)**: tăng `1 → 2` để đánh dấu **ngữ nghĩa mới** của ô chỉ số
+/// `>= GLOBAL_SLOT_BASE` (xem mục “Ảnh hưởng tương thích” dưới). Không đổi `MAGIC`, bố cục hay
+/// opcode. `decode`/`verify` so sánh trường này **trước thực thi**; runtime v1 vì thế từ chối artifact
+/// v2 và ngược lại. Khoá cache cũng đưa `VERSION` vào (xem `vis-cli::cache::khoa_multi`).
+pub const VERSION: u16 = 2;
+/// **VD-257 (stream B)** — phiên bản **định dạng module có instrumentation ngân sách**: `3`.
+///
+/// `1`→`2` đã dùng (ST-246); `3` **chưa từng** là phiên bản phát hành (kiểm chứng `git log`:
+/// `SIZE` chỉ có 1 và 2; `3` từng là *sentinel "version lạ"* trong test, không phải bản thật).
+/// Artifact mang trailer bảng phí `VFEE` (**yêu cầu** ngữ nghĩa budget mới) được đóng dấu `3`.
+/// Runtime cũ (so `VERSION = 2`) vì thế **từ chối** artifact mới thay vì đọc lõi rồi **lờ trailer**
+/// (đây là lỗ hổng mà chỉ đổi khoá cache không vá được — đường *direct load* không đi qua cache).
+/// Ngược lại, cửa nạp có budget (`fee::load_verified_with_fee`) **chỉ** nhận `3` + trailer hợp lệ,
+/// nên artifact cũ (`VERSION = 2`, không trailer) bị từ chối rõ ràng — **không** bị coi là "đã charge".
+///
+/// Bốn trục phiên bản (VD-257) — **độc lập, không cần bằng nhau**:
+/// 1. **Module format** — [`VERSION`] (2, cơ sở) / [`INSTRUMENTED_VERSION`] (3, có trailer).
+/// 2. **Event-table** — `fee::EVENT_TABLE_VERSION` (4; cấu trúc `pc/kind/site` trong `VFEE`).
+/// 3. **Weight-table** — `fee::WEIGHT_TABLE_VERSION` (1; bảng trọng số v1, **thử nghiệm**).
+/// 4. **Cache key** — `vis-cli::cache::PHIEN_BAN` + cả ba số trên + bảng thẻ + mode + nguồn.
+pub const INSTRUMENTED_VERSION: u16 = 3;
 /// Số byte hash nguồn.
 pub const HASH_LEN: usize = 32;
+
+/// **ST-238 (VD-242, ca 3)** — vùng ô cục bộ dành riêng cho **biến cấp tệp** (`let`/`var`
+/// ở thân tệp). Codegen dùng `LoadLocal`/`StoreLocal` với chỉ số `>= GLOBAL_SLOT_BASE`; VM ánh xạ
+/// các chỉ số này tới kho chung `Vm::globals`, verifier bỏ qua kiểm `nlocals` cho chúng.
+///
+/// # Ảnh hưởng tương thích (ST-245 + ST-246/VD-244) — KHÔNG kết luận "không đổi hợp đồng"
+///
+/// Cách mã hóa này **có ngữ nghĩa mới** nằm ngay trong toán hạng `LoadLocal`/`StoreLocal`/`Assign`/
+/// `BindLocal`: ô `>= GLOBAL_SLOT_BASE` không còn là chỉ số ô cục bộ mà là **chỉ số ô global**
+/// (`slot - GLOBAL_SLOT_BASE` trong `Vm::globals`). Vì vậy:
+///
+/// - Bytecode do codegen **trước ST-238** không chứa ô `>= 0x8000` ⇒ dữ liệu vẫn chạy đúng, **nhưng từ
+///   ST-246 nó mang `VERSION = 2`**: artifact cũ (`VERSION = 1`) bị `decode`/`verify` từ chối trước
+///   thực thi, phải biên dịch lại từ source. Không còn "dùng lại artifact cũ" như ghi nhận ST-245.
+/// - Bytecode **mang ô global** chỉ đúng trên VM từ ST-238 trở đi. VM cũ hơn (v1) hiểu nhầm ô
+///   `0x8000+k` thành ô cục bộ `32768+k`: đọc trả `()` (`Vec::get(...).unwrap_or(Unit)`), ghi
+///   `resize` khung cục bộ tới ~32768 ô ⇒ **kết quả sai, không crash**. Đây chính là lý do ST-246
+///   tăng [`VERSION`]: runtime v1 so `VERSION` ⇒ từ chối artifact v2 thay vì chạy sai; runtime v2 so
+///   `VERSION` ⇒ từ chối artifact v1. **Không** đổi `MAGIC`/bố cục/opcode để làm việc này.
+/// - Khoá cache nay đưa cả [`VERSION`] vào (xem `vis-cli::cache::khoa_multi`, ST-246/VD-244) ⇒ cache
+///   v1 tự vô hiệu, source được biên dịch lại. Bytecode v1 **không có source** bị từ chối rõ
+///   (`DecodeError::BadVersion(1)` / `VerifyError::BadVersion(1)`), không có đường tương thích đã được
+///   VD-244 duyệt.
+/// - Verifier vẫn là hàng rào chặn ô global ngoài miền (xem [`crate::verify::verify`], ST-245); số
+///   global thực tế không được serialize mà **suy ra** từ tập ô vùng global có lệnh ghi.
+/// - `VerifyError` có thêm biến thể `GlobalOverflow` (ST-245) ⇒ chuỗi chẩn đoán của bytecode hỏng
+///   đổi; đây là thay đổi bề mặt lỗi, ghi nhận ở đây thay vì gọi là "không đổi".
+pub const GLOBAL_SLOT_BASE: u16 = 0x8000;
+
+/// **ST-238 (VD-242, ca 7)** — tên builtin giả để VM trap khi `match` rơi khỏi mọi nhánh.
+/// Không phải builtin thật; VM chặn trước khi gọi `vis_interp::builtin::call`.
+pub const BI_MATCH_NO_ARM: &str = "$vis_match_no_arm";
 
 /// Hằng trong **const pool** — giữ **nguyên văn** literal HIR (cùng `LitKind`) để không mất mát.
 #[derive(Debug, Clone, PartialEq, Eq)]

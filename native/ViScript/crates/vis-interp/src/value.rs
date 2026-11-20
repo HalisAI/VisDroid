@@ -28,6 +28,8 @@ pub struct Closure {
     pub params: Vec<u32>,
     pub body: HBody,
     pub env: Env,
+    /// **VD-241 §3 (A0, 2026-11-19)** — số lớp `Opt` của annot return (`T?` → 1, `T??` → 2).
+    pub ret_depth: usize,
 }
 
 /// Giá trị lúc chạy của VS0.
@@ -49,6 +51,13 @@ pub enum Value {
     Path(String),
     List(Vec<Value>),
     /// Giữ **thứ tự chèn** để `keys()`/`Show` ổn định.
+    ///
+    /// **ST-239 (VD-242 §3.4, ca 170)**: map là ánh xạ **khoá → giá trị**, mỗi khoá **một**
+    /// entry. Runtime (literal có khoá do biến tính, `m[k] = v`, `json.decode`) dùng **last-wins**
+    /// (giữ giá trị cuối, vị trí chèn đầu); `eq_value` cũng so theo ánh xạ đã gộp. Riêng
+    /// `json.decode` chọn last-wins là **lựa chọn của ViScript, KHÔNG phải luật JSON bắt buộc**
+    /// (JSON chỉ khuyến nghị unique key; decoder của ngôn ngữ khác có thể lấy đầu hoặc báo lỗi).
+    /// Literal có khoá trùng **xác định được tĩnh** bị checker từ chối (không phải sửa ở runtime).
     Map(Vec<(Value, Value)>),
     /// Tên kiểu (rỗng nếu ẩn danh) + trường theo thứ tự khai.
     Record(String, Vec<(String, Value)>),
@@ -108,6 +117,18 @@ impl Value {
             Some(v) => Value::some(v),
             None => Value::none(),
         }
+    }
+
+    /// **VD-222 (điểm 2–3)** — dựng bản ghi `Error` dựng sẵn (`message`, `source = None`, `span = None`).
+    pub fn ban_ghi_error(message: impl Into<String>, span: Option<String>) -> Value {
+        Value::Record(
+            "Error".into(),
+            vec![
+                ("message".into(), Value::Str(message.into())),
+                ("source".into(), Value::none()),
+                ("span".into(), Value::opt(span.map(Value::Str))),
+            ],
+        )
     }
 
     /// `Ok(v)` — enum `Result` thật (VD-204 (1)).
@@ -199,6 +220,16 @@ impl Value {
                 format!("{{{}}}", body.join(", "))
             }
             Value::Record(name, fields) => {
+                // **VD-222 (điểm 4)** — bản ghi `Error` dựng sẵn in **thanh gọn** = chỉ `{message}`
+                // để các ca `Err(e): print(e)` byte-identical với thời `err(str)`; `source`/`span`
+                // vẫn hiện khi in đủ (`{e.message}`) hoặc in bằng `{e}` khi cần đầy đủ.
+                if name == "Error" {
+                    return fields
+                        .iter()
+                        .find(|(n, _)| n == "message")
+                        .map(|(_, v)| v.show())
+                        .unwrap_or_else(|| "{unknown Error}".to_string());
+                }
                 let body: Vec<String> = fields
                     .iter()
                     .map(|(n, v)| format!("{n}: {}", v.show()))
@@ -221,6 +252,8 @@ impl Value {
             Value::Range(a, b, incl) => {
                 format!("{a}..{}{b}", if *incl { "=" } else { "" })
             }
+            // **VD-241 §7/8 (A0, 2026-11-19)** — closure Show đồng nhất một chuỗi: `<fn>` khắp
+            // mọi máy (interp lẫn VM), kể cả anonymous. Trước đây interp `<fn>` còn VM `<hàm>`.
             Value::Builtin(name) => format!("<builtin {name}>"),
             Value::Fn(c) => {
                 if c.name.is_empty() {
@@ -229,7 +262,7 @@ impl Value {
                     format!("<fn {}>", c.name)
                 }
             }
-            Value::Vm(_) => "<hàm>".to_string(),
+            Value::Vm(_) => "<fn>".to_string(),
             Value::Task(_) => "<tác vụ>".to_string(),
             Value::Chan(_) => "<kênh>".to_string(),
             Value::Cap { kind, root, .. } => {
@@ -264,6 +297,20 @@ impl Value {
                 a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.eq_value(y))
             }
             (Value::Map(a), Value::Map(b)) => {
+                // **ST-239 (VD-242 §3.4)**: so **ánh xạ khoá → giá trị**, không phụ thuộc entry
+                // trùng hay thứ tự chèn. Gộp last-wins hai vế rồi so từng khoá một.
+                fn gop(xs: &[(Value, Value)]) -> Vec<&(Value, Value)> {
+                    let mut out: Vec<&(Value, Value)> = Vec::with_capacity(xs.len());
+                    for e in xs {
+                        if let Some(prev) = out.iter_mut().find(|p| p.0.eq_value(&e.0)) {
+                            *prev = e;
+                        } else {
+                            out.push(e);
+                        }
+                    }
+                    out
+                }
+                let (a, b) = (gop(a), gop(b));
                 a.len() == b.len()
                     && a.iter()
                         .all(|(k, v)| b.iter().any(|(k2, v2)| k.eq_value(k2) && v.eq_value(v2)))
@@ -392,11 +439,29 @@ fn show_duration(n: i64) -> String {
     format!("{n}ns")
 }
 
+/// **ST-240 / VD-243 (#172)**: `2^63` — `i64::MAX as f64` (Rust làm tròn lên). `show_percent`
+/// ép `p.round() as i64`; Rust **bão hoà** ở `|p| ≥ 2^63`, nên đây là ranh giới biểu diễn hiện hành.
+/// Không đổi thang đo/quy tắc làm tròn — chỉ chặn giá trị vượt miền trước khi đi vào máy.
+pub const PCT_GIOI_I64: f64 = 9_223_372_036_854_775_808.0;
+
+/// **ST-240 / VD-243 (#172)**: `percent` hợp lệ = hữu finite và phần trăm (`ratio * 100`) vẫn nằm
+/// trong miền `i64` hiện hành. Dùng ở mọi nơi **tạo/chuyển đổi** `Percent` (literal, toán tử) để
+/// giá trị sai không bao giờ lọt vào tính toán hay `show`.
+pub fn pct_hop_le(ratio: f64) -> bool {
+    if !ratio.is_finite() {
+        return false;
+    }
+    let pct = ratio * 100.0;
+    (-PCT_GIOI_I64..=PCT_GIOI_I64).contains(&pct)
+}
+
 fn show_percent(r: f64) -> String {
     let p = r * 100.0;
-    if (p - p.round()).abs() < 1e-9 {
+    if (p - p.round()).abs() < 1e-9 && (-PCT_GIOI_I64..=PCT_GIOI_I64).contains(&p) {
         format!("{}pct", p.round() as i64)
     } else {
+        // Phòng thủ: giá trị lọt qua (bytecode tay, test nội bộ) thì in dạng float thật,
+        // **không** bão hoà thành `9223372036854775807pct`.
         format!("{p}pct")
     }
 }
@@ -492,10 +557,18 @@ fn scale_duration(num: &str, unit: &str) -> Option<i64> {
 }
 
 /// Đọc literal `percent` (`50pct`, `12.5pct`) — trả **tỉ lệ 0..1**.
+///
+/// **ST-240 / VD-243 (#172)**: literal không biểu diễn được (vô cực, hoặc phần trăm vượt miền
+/// `i64` như `1e300pct`) bị từ chối **tại nơi tạo giá trị** — cả interp lẫn VM đều đi qua hàm này
+/// (`interp::lit_value`), nên lỗi xuất hiện trước khi giá trị sai đi vào tính toán/`show`.
 pub fn parse_percent(text: &str) -> Option<f64> {
     let t = text.trim().trim_end_matches("pct");
     let v: f64 = t.parse().ok()?;
-    Some(v / 100.0)
+    let ratio = v / 100.0;
+    if !pct_hop_le(ratio) {
+        return None;
+    }
+    Some(ratio)
 }
 
 /// Bỏ quote + xử lý escape cho `"..."`, `"""..."""`, `r"..."`, `r"""..."""`.
@@ -653,9 +726,12 @@ pub fn iter_items(it: Value, span: vis_syntax::Span) -> crate::interp::R<Vec<Val
 }
 
 /// Mã thoát: `main` trả `int` ⇒ dùng số đó (cắt 8 bit); còn lại `0`.
+/// **VD-241 §3/T5 (A0, 2026-11-19)** — mã thoát chương trình: `main` trả `Result::Err` ⇒ `1`;
+/// `Int` ⇒ chính nó (mod 256); còn lại `0`.
 pub fn exit_code(v: &Value) -> i32 {
     match v {
         Value::Int(i) => (*i & 0xff) as i32,
+        Value::Enum(ea, va, _) if ea == "Result" && va == "Err" => 1,
         _ => 0,
     }
 }

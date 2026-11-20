@@ -45,10 +45,15 @@
 //! ```
 
 pub mod builtin_assert;
+/// **VD-241 (Gate 1)** — trait `DbHost` (host cơ sở dữ liệu).
+pub mod builtin_db;
 pub mod builtin_list;
+/// **ST-46** — `ls --long` helpers.
+mod builtin_ls;
 mod gan;
 mod host;
 pub mod json;
+pub(crate) mod lift;
 pub mod net;
 pub mod render;
 pub mod rt;
@@ -62,6 +67,9 @@ pub mod ops {
 
 pub mod builtin;
 mod builtin_value;
+/// **ST-267/VD-251 (chỉ test/debug)** — frame scheduler nối vào đường interp thật.
+#[doc(hidden)]
+pub mod frame;
 pub mod interp;
 mod pat;
 
@@ -114,7 +122,7 @@ pub fn run(
 
 /// Như [`run`] nhưng gắn **host chương trình ngoài** (ST-27). `None` ⇒ lệnh ngoài ⇒ `VS0604`.
 pub fn run_with_ngoai<'a>(
-    text: &str,
+    text: &'a str,
     hir: &'a Hir,
     symbols: &'a Symbols,
     types: &'a TypeTable,
@@ -125,10 +133,10 @@ pub fn run_with_ngoai<'a>(
 }
 
 /// Như [`run`] nhưng gắn **cả ba** host: chương trình ngoài (ST-27), hệ thống tệp (ST-33) và mạng
-/// (ST-63, VD-105). `None` ở host nào ⇒ tính năng đó ⇒ `VS0604`.
+/// (ST-63, VD-105). `None` ở host nào ⇒ tính năng đó ⇒ `VS0604`. **VD-241**: DB host `None`.
 #[allow(clippy::too_many_arguments)]
 pub fn run_with_hosts<'a>(
-    text: &str,
+    text: &'a str,
     hir: &'a Hir,
     symbols: &'a Symbols,
     types: &'a TypeTable,
@@ -137,14 +145,15 @@ pub fn run_with_hosts<'a>(
     fs: Option<&'a mut dyn crate::builtin::FsHost>,
     net: Option<&'a mut dyn crate::builtin::NetHost>,
 ) -> RunOutput {
-    run_with_hosts_caps(text, hir, symbols, types, args, ngoai, fs, net, &[])
+    run_with_hosts_caps(text, hir, symbols, types, args, ngoai, fs, net, None, &[])
 }
 
 /// **ST-72b (VD-103/VD-106)**: như [`run_with_hosts`] nhưng gắn **giá trị quyền** `cap` cho `main`
 /// (`(chỉ số tham số, giá trị)`); CLI tính từ CST. Đường cũ giữ nguyên chữ ký qua wrapper trên.
+/// **VD-241 (Gate 1)**: nhận thêm **host cơ sở dữ liệu** (`None` ⇒ `std.sqlite.*` ⇒ `VS0604`).
 #[allow(clippy::too_many_arguments)]
 pub fn run_with_hosts_caps<'a>(
-    text: &str,
+    text: &'a str,
     hir: &'a Hir,
     symbols: &'a Symbols,
     types: &'a TypeTable,
@@ -152,6 +161,7 @@ pub fn run_with_hosts_caps<'a>(
     ngoai: Option<&'a mut dyn crate::builtin::Ngoai>,
     fs: Option<&'a mut dyn crate::builtin::FsHost>,
     net: Option<&'a mut dyn crate::builtin::NetHost>,
+    db: Option<&'a mut dyn crate::builtin::DbHost>,
     caps: &[(u32, Value)],
 ) -> RunOutput {
     let mut it = interp::Interp::new(hir, symbols, types);
@@ -167,14 +177,18 @@ pub fn run_with_hosts_caps<'a>(
     if let Some(g) = net {
         it.set_net(g);
     }
+    if let Some(d) = db {
+        it.set_db(d);
+    }
     let res = it.run_program(args);
     let stdout = it.take_stdout();
     let steps = it.steps;
     match res {
         Ok(value) => {
+            // **VD-241 §3/T5 (A0, 2026-11-19)** — `Ok`/`Result::Ok` ⇒ `exit_code` (Err ⇒ 1).
             let exit = match &value {
-                Some(Value::Int(i)) => (*i & 0xff) as i32,
-                _ => 0,
+                Some(v) => crate::value::exit_code(v),
+                None => 0,
             };
             RunOutput {
                 stdout,
@@ -187,13 +201,22 @@ pub fn run_with_hosts_caps<'a>(
         Err(interp::Abort::Ret(value)) => RunOutput {
             stdout,
             diagnostics: Vec::new(),
-            value: Some(value),
-            exit: 0,
+            value: Some(value.clone()),
+            exit: crate::value::exit_code(&value),
             steps,
         },
         Err(interp::Abort::Trap(trap)) => RunOutput {
             stdout,
             diagnostics: vec![trap.to_diag(text)],
+            value: None,
+            exit: 1,
+            steps,
+        },
+        // Chỉ test/frame: `run_program` mặc định không bật frame ⇒ không xảy ra;
+        // driver frame dùng entry point riêng và tự xử lý `Pending`.
+        Err(interp::Abort::Pending(_)) => RunOutput {
+            stdout,
+            diagnostics: Vec::new(),
             value: None,
             exit: 1,
             steps,

@@ -33,13 +33,34 @@ use std::process::Command;
 /// **SỬA KÈM LÝ DO (R20b, VD-178)**: 463 → **464** (+`list/duyet-nang-cao`).
 /// **SỬA KÈM LÝ DO (R19b, VD-178)**: 464 → **465** (+`loi/doi-dau-tran` VS0507).
 /// **SỬA KÈM LÝ DO (R2, VD-178)**: 465 → **469** (+`optional/{int-qhap-gan, map-get-lot, t-qhap-generic}` + `loi/none-bo`).
-const SO_CA: usize = 469;
+/// **SỬA KÈM LÝ DO (VD-240-b, 2026-11-19)**: 469 → **473** (+4 ca grid `async/grid-*`, 423 `.vis` + 50 `.vish`).
+/// **SỬA KÈM LÝ DO (VD-241 §3, 2026-11-19)**: 473 → **483** (+10 ca Option lồng thật; 433 `.vis` + 50 `.vish`).
+/// **SỬA KÈM LÝ DO (VD-241 §7, 2026-11-19)**: 483 → **486** (+3 ca `optional/` — `none-three-states`,
+///   `long-none-param`, `long-none-return`; đổi `long-reject-e` (`.err`) thành `long-none-e` hợp lệ); 436 `.vis` + 50 `.vish`, **88 `.err`**.
+/// **SỬA KÈM LÝ DO (VD-241 đợt coercion, 2026-11-19)**: 486 → **487** (+1 ca `optional/long-option-matrix.vis` —
+///   ma trận sugar/spelled-out/alias × biên let/gán-lại/đối số/thân hàm/return × bảng giá trị A0; sửa runtime coercion); 437 `.vis` + 50 `.vish`, **88 `.err`**.
+/// **SỬA KÈM LÝ DO (VD-241 Gate 1, 2026-11-19)**: 487 → **514** (+27 ca `sqlite/`: 19 xanh + 8 lỗi lúc chạy VS0501); 464 `.vis` + 50 `.vish`, **96 `.err`**.
+/// **SỬA KÈM LÝ DO (VD-241 pre-merge, 2026-11-19)**: 514 → **525** (+11 ca `sqlite/`: `execute-tra-hang`,
+///   `bind-inf`, ma trận authorizer 9 ca — mọi lỗi dữ liệu nay là `Result.Err` ⇒ 8 `.err` đổi thành `.out`);
+///   475 `.vis` + 50 `.vish`, **88 `.err`**.
+const SO_CA: usize = 525;
+
+/// PATH có thêm thư mục chứa `test-child` — cho fixture `.vish` gọi `test-child` bare.
+fn path_voi_tc() -> std::ffi::OsString {
+    let tc = std::path::Path::new(env!("CARGO_BIN_EXE_test-child"));
+    let mut muc: Vec<std::path::PathBuf> =
+        vec![tc.parent().expect("test-child parent").to_path_buf()];
+    let cur = std::env::var_os("PATH").unwrap_or_default();
+    for p in std::env::split_paths(&cur) {
+        muc.push(p);
+    }
+    std::env::join_paths(muc).expect("join PATH")
+}
 
 fn vis(args: &[&str]) -> (i32, String, String) {
-    let o = Command::new(env!("CARGO_BIN_EXE_vis"))
-        .args(args)
-        .output()
-        .expect("chạy `vis test`");
+    let mut c = Command::new(env!("CARGO_BIN_EXE_vis"));
+    c.env("PATH", path_voi_tc());
+    let o = c.args(args).output().expect("chạy `vis test`");
     (
         o.status.code().unwrap_or(-1),
         String::from_utf8_lossy(&o.stdout).to_string(),
