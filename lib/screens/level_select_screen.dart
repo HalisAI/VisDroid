@@ -11,6 +11,7 @@ import '../core/settings.dart';
 import '../core/vis_engine.dart';
 import '../game/game_theme.dart';
 import '../game/levels.dart';
+import '../game/maze.dart';
 import '../game/progress.dart';
 import '../game/sprites.dart';
 import 'maze_screen.dart';
@@ -243,6 +244,7 @@ class _LevelCard extends StatelessWidget {
     required this.onTap,
   });
 
+  final MazeLevel level;
   final int index;
   final int stars;
   final bool unlocked;
