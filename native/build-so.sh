@@ -53,6 +53,23 @@ linker = "$TOOLCHAIN/armv7a-linux-androideabi25-clang"
 linker = "$TOOLCHAIN/x86_64-linux-android25-clang"
 EOF
 
+# Crate `cc` (libsqlite3-sys của upstream mới, VD-241) biên dịch C cho target
+# Android — cần CC/AR tường minh: NDK không có file "aarch64-linux-android-clang"
+# (chỉ có bản gắn API-suffix), nên PATH thuần không đủ.
+export CC_aarch64-linux-android="$TOOLCHAIN/aarch64-linux-android25-clang"
+export CC_aarch64_linux_android="$CC_aarch64-linux-android"
+export CC_armv7-linux-androideabi="$TOOLCHAIN/armv7a-linux-androideabi25-clang"
+export CC_armv7_linux_androideabi="$CC_armv7-linux-androideabi"
+export CC_x86_64-linux-android="$TOOLCHAIN/x86_64-linux-android25-clang"
+export CC_x86_64_linux_android="$CC_x86_64-linux-android"
+for T in aarch64-linux-android armv7-linux-androideabi x86_64-linux-android; do
+    export "AR_${T}=$TOOLCHAIN/llvm-ar"
+    export "CXX_${T}=$TOOLCHAIN/clang++"
+    T_U="${T//-/_}"
+    export "AR_${T_U}=$TOOLCHAIN/llvm-ar"
+    export "CXX_${T_U}=$TOOLCHAIN/clang++"
+done
+
 CARGO="$(command -v cargo || echo "$HOME/.cargo/bin/cargo")"
 mkdir -p "$APP_DIR/src/main/jniLibs"
 
