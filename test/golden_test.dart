@@ -70,6 +70,14 @@ Future<void> _reg(String family, List<String> files) async {
 }
 
 Future<void> main() async {
+  // Golden cần bộ font cục bộ của máy phát triển; runner CI không có —
+  // không nạp font (chết ở load) mà skip cả suite một cách rõ ràng.
+  if (!Directory(_fontDir).existsSync()) {
+    test('golden screens (skip: thiếu font cục bộ)', () {
+      markTestSkipped('Golden test cần font trong $_fontDir — chỉ có trên máy phát triển.');
+    });
+    return;
+  }
   TestWidgetsFlutterBinding.ensureInitialized();
   await _reg(
       'Roboto', ['Roboto-Regular.ttf', 'Roboto-Medium.ttf', 'Roboto-Bold.ttf']);
