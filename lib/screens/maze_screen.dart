@@ -687,6 +687,23 @@ class _MazeScreenState extends State<MazeScreen> with TickerProviderStateMixin {
                       textAlign: TextAlign.center,
                       style: gameDimStyle(13.5),
                     ),
+                    const SizedBox(height: 4),
+                    Text(
+                      t(context, S.gameBestSteps).replaceFirst(
+                          '{n}',
+                          '${widget.progress.bestOf(_level) ?? _stepsTaken}'),
+                      textAlign: TextAlign.center,
+                      style: gameDimStyle(12),
+                    ),
+                    if (_starsEarned < 3) ...[
+                      const SizedBox(height: 6),
+                      Text(
+                        t(context, S.gameReplayForStars)
+                            .replaceFirst('{m}', '${_level.par}'),
+                        textAlign: TextAlign.center,
+                        style: gameStateStyle(kGameAccent),
+                      ),
+                    ],
                     if (_levelIndex == kGameLevels.length - 1) ...[
                       const SizedBox(height: 6),
                       Text(

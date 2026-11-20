@@ -129,6 +129,8 @@ enum S {
   gameResetProgress,
   gameResetProgressConfirm,
   gameResetDone,
+  gameBestSteps,
+  gameReplayForStars,
 }
 
 const Map<S, String> _vi = {
@@ -212,6 +214,8 @@ const Map<S, String> _vi = {
   S.gameResetProgressConfirm:
       'Xoá toàn bộ sao, tiến độ và code đã lưu của Mê cung? Hành động này không hoàn tác.',
   S.gameResetDone: 'Đã đặt lại tiến độ Mê cung',
+  S.gameBestSteps: 'Kỷ lục của bạn: {n} bước',
+  S.gameReplayForStars: 'Chơi lại để đạt đủ 3★ (≤ {m} bước)!',
   S.editor: 'Editor',
   S.console: 'Bảng chạy',
   S.line: 'dòng',
@@ -345,6 +349,8 @@ const Map<S, String> _en = {
   S.gameResetProgressConfirm:
       'Delete all maze stars, progress and saved code? This cannot be undone.',
   S.gameResetDone: 'Maze progress reset',
+  S.gameBestSteps: 'Your best: {n} steps',
+  S.gameReplayForStars: 'Replay to earn all 3★ (≤ {m} steps)!',
   S.editor: 'Editor',
   S.console: 'Console',
   S.line: 'line',
