@@ -8,6 +8,7 @@ import 'package:material_ui/material_ui.dart';
 import '../core/l10n.dart';
 import '../core/settings.dart';
 import '../core/vis_engine.dart';
+import '../game/progress.dart';
 import 'cheatsheet_screen.dart';
 
 const String kAppVersion = '1.1.4';
@@ -48,6 +49,39 @@ class _SettingsScreenState extends State<SettingsScreen> {
           _engineOk = false;
         });
       }
+    }
+  }
+
+  /// Xoá toàn bộ tiến độ Mê cung (sao/bước/code) — qua dialog xác nhận.
+  Future<void> _resetGameProgress(BuildContext context) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(t(ctx, S.gameResetProgress)),
+        content: Text(t(ctx, S.gameResetProgressConfirm)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(t(ctx, S.cancel)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(
+              t(ctx, S.delete),
+              style: TextStyle(color: Theme.of(ctx).colorScheme.error),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    final progress = GameProgress(widget.appState.prefs);
+    await progress.load();
+    await progress.reset();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(t(context, S.gameResetDone))),
+      );
     }
   }
 
@@ -167,6 +201,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       builder: (_) => const CheatSheetScreen(),
                     ),
                   ),
+                ),
+                ListTile(
+                  leading: const Icon(Icons.sports_esports_outlined),
+                  title: Text(t(context, S.gameResetProgress)),
+                  onTap: () => _resetGameProgress(context),
                 ),
               ],
             ),

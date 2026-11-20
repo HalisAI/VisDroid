@@ -13,9 +13,10 @@ import 'core/project.dart';
 import 'core/run_history.dart';
 import 'core/settings.dart';
 import 'core/vis_engine.dart';
+import 'game/progress.dart';
 import 'screens/editor_screen.dart';
 import 'screens/files_screen.dart';
-import 'screens/maze_screen.dart';
+import 'screens/level_select_screen.dart';
 import 'screens/settings_screen.dart';
 
 Future<void> main() async {
@@ -93,6 +94,7 @@ class Shell extends StatefulWidget {
 class _ShellState extends State<Shell> {
   int _tab = 0;
   VisProject? _project;
+  GameProgress? _gameProgress;
   String? _lastFileName;
   bool _booted = false;
   final GlobalKey<EditorScreenState> _editorKey = GlobalKey<EditorScreenState>();
@@ -106,12 +108,16 @@ class _ShellState extends State<Shell> {
   Future<void> _boot() async {
     final project = await VisProject.instance();
     await project.seedExamplesIfNeeded();
+    // Tiến độ Mê cung: nạp song song phần còn lại của app.
+    final game = GameProgress(widget.state.prefs);
+    await game.load();
     final last = widget.state.lastFile;
     final opened =
         last != null && project.exists(last) ? last : null;
     if (!mounted) return;
     setState(() {
       _project = project;
+      _gameProgress = game;
       _booted = true;
     });
     if (opened != null) {
@@ -159,10 +165,10 @@ class _ShellState extends State<Shell> {
               onOpenFile: _openFromFiles,
             ),
             SettingsScreen(appState: widget.state),
-            MazeScreen(
+            LevelSelectScreen(
               engine: widget.engine,
-              prefs: widget.state.prefs,
               appState: widget.state,
+              progress: _gameProgress!,
             ),
           ],
         ),

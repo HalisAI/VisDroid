@@ -2,7 +2,7 @@ name: visdroid
 description: "VisDroid — IDE ViScript cho Android, nhúng engine ViScript (.so) chạy tức thì."
 publish_to: 'none'
 
-version: 1.1.4+6
+version: 1.2.0+7
 
 environment:
   sdk: ^3.14.0
@@ -24,3 +24,4 @@ flutter:
   assets:
     - assets/examples/
     - assets/visdroid-icon.png
+    - assets/game/

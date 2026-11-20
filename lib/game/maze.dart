@@ -60,21 +60,28 @@ extension FacingDelta on Facing {
 class MazeLevel {
   const MazeLevel({
     required this.id,
+    required this.world,
     required this.title,
     required this.task,
     required this.grid,
     required this.startFacing,
     required this.starterCode,
     required this.hint,
+    required this.par,
   });
 
   final String id;
+  final int world; // thế giới (nhóm màn trong màn chọn kiểu game).
   final String title;
   final String task;
   final List<String> grid;
   final Facing startFacing;
   final String starterCode;
   final String hint;
+
+  /// Số bước chuẩn (di chuyển + quay + nhặt) của route tối ưu đã kiểm chứng
+  /// bằng engine thật. Chấm sao: ≤ par = 3★, ≤ par+4 = 2★, còn lại 1★.
+  final int par;
 
   int get cols => grid.first.length;
   int get rows => grid.length;
@@ -171,17 +178,22 @@ ParseResult parseCommands(String stdout) {
 
 /// Một khung hình hoạt ảnh: vị trí + hướng robot, món đồ còn lại, và cờ
 /// `bump` khi robot đâm tường (đứng yên ở ô hiện tại).
+///
+/// [q] là số lần quay 90° cộng dồn (phải +1, trái −1) — dùng để nội suy góc
+/// quay mượt theo đúng chiều rẽ, không bị "đi đường tắt" qua π.
 class SimFrame {
   const SimFrame({
     required this.at,
     required this.facing,
     required this.picked,
+    this.q = 0,
     this.bump = false,
   });
 
   final Cell at;
   final Facing facing;
   final Set<Cell> picked;
+  final int q;
   final bool bump;
 }
 
@@ -214,26 +226,31 @@ class SimOutcome {
 SimOutcome simulate(MazeLevel level, List<GameCmd> cmds) {
   var at = level.start;
   var facing = level.startFacing;
+  var q = 0; // quay cộng dồn cho tween góc mượt.
   final picked = <Cell>{};
-  final frames = <SimFrame>[SimFrame(at: at, facing: facing, picked: Set.of(picked))];
+  final frames = <SimFrame>[
+    SimFrame(at: at, facing: facing, picked: Set.of(picked)),
+  ];
 
   for (var i = 0; i < cmds.length; i++) {
     final cmd = cmds[i];
     switch (cmd.kind) {
       case CmdKind.turnLeft:
         facing = facing.turnedLeft;
-        frames.add(SimFrame(at: at, facing: facing, picked: Set.of(picked)));
+        q -= 1;
+        frames.add(SimFrame(at: at, facing: facing, picked: Set.of(picked), q: q));
         break;
       case CmdKind.turnRight:
         facing = facing.turnedRight;
-        frames.add(SimFrame(at: at, facing: facing, picked: Set.of(picked)));
+        q += 1;
+        frames.add(SimFrame(at: at, facing: facing, picked: Set.of(picked), q: q));
         break;
       case CmdKind.pickup:
         if (level.items.contains(at) && !picked.contains(at)) {
           picked.add(at);
-          frames.add(SimFrame(at: at, facing: facing, picked: Set.of(picked)));
+          frames.add(SimFrame(at: at, facing: facing, picked: Set.of(picked), q: q));
         } else {
-          frames.add(SimFrame(at: at, facing: facing, picked: Set.of(picked)));
+          frames.add(SimFrame(at: at, facing: facing, picked: Set.of(picked), q: q));
           return SimOutcome(
             win: false,
             frames: frames,
@@ -247,7 +264,13 @@ SimOutcome simulate(MazeLevel level, List<GameCmd> cmds) {
         for (var step = 0; step < cmd.n; step++) {
           final next = at + facing.delta;
           if (level.isWall(next)) {
-            frames.add(SimFrame(at: at, facing: facing, picked: Set.of(picked), bump: true));
+            frames.add(SimFrame(
+              at: at,
+              facing: facing,
+              picked: Set.of(picked),
+              q: q,
+              bump: true,
+            ));
             return SimOutcome(
               win: false,
               frames: frames,
@@ -257,7 +280,7 @@ SimOutcome simulate(MazeLevel level, List<GameCmd> cmds) {
             );
           }
           at = next;
-          frames.add(SimFrame(at: at, facing: facing, picked: Set.of(picked)));
+          frames.add(SimFrame(at: at, facing: facing, picked: Set.of(picked), q: q));
         }
         break;
     }
@@ -300,100 +323,3 @@ fn re_phai():
 fn nhat_do():
     print("nhat")
 ''';
-
-/// Bốn màn khởi đầu: tuần tự → rẽ/vòng lặp → nhặt đồ → tự viết hàm.
-/// (dùng `final` vì starterCode nội suy [helperCode])
-final List<MazeLevel> kMazeLevels = [
-  MazeLevel(
-    id: '1',
-    title: 'Lệnh đầu tiên',
-    task: 'Robot nhìn sang phải, cờ cách 5 ô. Gọi di_tien(5) để tới cờ.',
-    startFacing: Facing.east,
-    grid: [
-      '########',
-      '#S....C#',
-      '########',
-    ],
-    hint: 'Gõ di_tien(5) dưới phần khai báo hàm rồi bấm Chạy. '
-        'Thử đổi số để xem robot đi xa hơn — đi quá cờ coi như chưa xong!',
-    starterCode: '''
-$helperCode
-
-# Màn 1: đi thẳng tới cờ. Viết lệnh ở dưới đây:
-
-''',
-  ),
-  MazeLevel(
-    id: '2',
-    title: 'Rẽ và vòng lặp',
-    task: 'Đi hết hành lang rồi rẽ phải, xuống dưới tới cờ. '
-        'Thử dùng vòng lặp for i in 0..3: di_tien(1).',
-    startFacing: Facing.east,
-    grid: [
-      '#######',
-      '#S....#',
-      '#####.#',
-      '#####.#',
-      '#####C#',
-      '#######',
-    ],
-    hint: 'Cách trực tiếp: di_tien(4) → re_phai() → di_tien(3).\n'
-        'Cách có vòng lặp: di_tien(4), re_phai(), rồi for i in 0..3: di_tien(1).',
-    starterCode: '''
-$helperCode
-
-# Màn 2: đi hết hành lang, rẽ phải, xuống tới cờ.
-
-''',
-  ),
-  MazeLevel(
-    id: '3',
-    title: 'Nhặt đồ trên đường',
-    task: 'Nhặt ĐỦ 2 món 🎁 trên hành lang rồi dừng ở cờ. '
-        'Nhặt = robot đang đứng NGAY trên ô món đồ khi gọi nhat_do().',
-    startFacing: Facing.east,
-    grid: [
-      '############',
-      '#S..X...X.C#',
-      '############',
-    ],
-    hint: 'di_tien(3) → nhat_do() → di_tien(4) → nhat_do() → di_tien(2). '
-        'Lưu ý: phải kết thúc NGAY trên ô cờ, không đi lố!',
-    starterCode: '''
-$helperCode
-
-# Màn 3: nhặt đủ 2 món 🎁 rồi tới cờ.
-
-''',
-  ),
-  MazeLevel(
-    id: '4',
-    title: 'Viết hàm của bạn',
-    task: 'Bậc thang lặp lại 3 lần giống nhau. Tự viết hàm mot_bac() đi đúng '
-        '1 bậc (tiến 1 → rẽ phải → tiến 1 → rẽ trái) rồi dùng vòng lặp gọi 3 lần.',
-    startFacing: Facing.east,
-    grid: [
-      '##########',
-      '#S.......#',
-      '##..######',
-      '###..#####',
-      '####..C###',
-      '##########',
-    ],
-    hint: 'fn mot_bac():\n'
-        '    di_tien(1)\n'
-        '    re_phai()\n'
-        '    di_tien(1)\n'
-        '    re_trai()\n'
-        '\n'
-        'for i in 0..3:\n'
-        '    mot_bac()\n'
-        'di_tien(2)',
-    starterCode: '''
-$helperCode
-
-# Màn 4: bậc thang! Tự viết hàm mot_bac() đi đúng 1 bậc rồi lặp 3 lần.
-
-''',
-  ),
-];
