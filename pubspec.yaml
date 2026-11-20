@@ -13,7 +13,7 @@ dependencies:
   cupertino_icons: ^1.0.8
   ffi: ^2.1.4
   material_ui: ^1.11.1
-  soundpool: ^2.2.0
+  audioplayers: ^6.1.0
 
 dev_dependencies:
   flutter_test:
