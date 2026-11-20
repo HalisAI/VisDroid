@@ -9,6 +9,7 @@ library;
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show setEquals;
 import 'package:flutter/material.dart';
 // Chỉ lấy CodeController từ material_ui — package này mirror toàn bộ
 // material API nên import nguyên thư sẽ xung đột tên (Theme, Icons, …).

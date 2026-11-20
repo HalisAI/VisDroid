@@ -31,7 +31,8 @@ class Cell {
   String toString() => '($x,$y)';
 }
 
-extension _FacingDelta on Facing {
+/// Vector hướng và phép quay — public để màn hình game vẽ mũi chỉ hướng.
+extension FacingDelta on Facing {
   Cell get delta => switch (this) {
         Facing.east => const Cell(1, 0),
         Facing.south => const Cell(0, 1),
