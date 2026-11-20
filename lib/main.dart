@@ -15,6 +15,7 @@ import 'core/settings.dart';
 import 'core/vis_engine.dart';
 import 'screens/editor_screen.dart';
 import 'screens/files_screen.dart';
+import 'screens/maze_screen.dart';
 import 'screens/settings_screen.dart';
 
 Future<void> main() async {
@@ -158,6 +159,11 @@ class _ShellState extends State<Shell> {
               onOpenFile: _openFromFiles,
             ),
             SettingsScreen(appState: widget.state),
+            MazeScreen(
+              engine: widget.engine,
+              prefs: widget.state.prefs,
+              appState: widget.state,
+            ),
           ],
         ),
         bottomNavigationBar: NavigationBar(
@@ -178,6 +184,11 @@ class _ShellState extends State<Shell> {
               icon: const Icon(Icons.settings_outlined),
               selectedIcon: const Icon(Icons.settings),
               label: t(context, S.tabSettings),
+            ),
+            NavigationDestination(
+              icon: const Icon(Icons.sports_esports_outlined),
+              selectedIcon: const Icon(Icons.sports_esports),
+              label: t(context, S.gameTab),
             ),
           ],
         ),

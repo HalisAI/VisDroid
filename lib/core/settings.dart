@@ -60,6 +60,9 @@ class AppState extends ChangeNotifier {
   }
 
   final PrefsStore _prefs;
+
+  /// Cho màn Mê cung lưu code mỗi màn + tiến độ (không mở store riêng).
+  PrefsStore get prefs => _prefs;
   ThemeMode _themeMode = ThemeMode.system;
   AppLang _lang = AppLang.vietnamese;
   bool _useVm = false;
