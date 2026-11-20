@@ -10,8 +10,11 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:material_ui/material_ui.dart';
+// Chỉ lấy CodeController từ material_ui — package này mirror toàn bộ
+// material API nên import nguyên thư sẽ xung đột tên (Theme, Icons, …).
+import 'package:material_ui/material_ui.dart' show CodeController;
 
+import '../core/highlighter.dart' show HighlightColors;
 import '../core/l10n.dart';
 import '../core/settings.dart';
 import '../core/vis_engine.dart';
