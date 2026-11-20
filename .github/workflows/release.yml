@@ -52,6 +52,16 @@ jobs:
         with:
           targets: aarch64-linux-android, armv7-linux-androideabi, x86_64-linux-android
 
+      # Upstream ghim toolchain cố định (rust-toolchain.toml, VD-252: 1.100.0) —
+      # target Android phải cài cho ĐÚNG bản được pin, nếu không cargo
+      # cross-compile thiếu std `core` của target (E0463).
+      - name: Install Android targets cho toolchain được pin
+        run: |
+          PIN=$(python3 -c "import tomllib; print(tomllib.load(open('native/ViScript/rust-toolchain.toml','rb'))['toolchain']['channel'])")
+          echo "Pin toolchain: $PIN"
+          rustup toolchain install "$PIN" --profile minimal
+          rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android --toolchain "$PIN"
+
       - name: Cache cargo
         uses: actions/cache@v4
         with:
