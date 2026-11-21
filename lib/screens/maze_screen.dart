@@ -652,14 +652,18 @@ class _MazeScreenState extends State<MazeScreen> with TickerProviderStateMixin {
             width: selected ? 1.6 : 1,
           ),
         ),
-        child: Text(
-          '$speed×',
-          style: TextStyle(
-            // Nhãn screen reader — chip chỉ hiện '1×/2×/4×' là chưa đủ nghĩa.
-            semanticsLabel: '${t(context, S.gameSpeed)} $speed×',
-            color: selected ? kGameAccent : kGameTextDim,
-            fontWeight: FontWeight.w800,
-            fontSize: 13,
+        child: Semantics(
+          // Nhãn screen reader — chip chỉ hiện '1×/2×/4×' là chưa đủ nghĩa.
+          label: '${t(context, S.gameSpeed)} $speed×',
+          button: true,
+          selected: selected,
+          child: Text(
+            '$speed×',
+            style: TextStyle(
+              color: selected ? kGameAccent : kGameTextDim,
+              fontWeight: FontWeight.w800,
+              fontSize: 13,
+            ),
           ),
         ),
       ),
