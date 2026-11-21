@@ -250,11 +250,13 @@ class EditorScreenState extends State<EditorScreen> {
     final lineEnd = text.indexOf('\n', lineStart);
     final lineLen = (lineEnd < 0 ? text.length : lineEnd) - lineStart;
     final target = lineStart + (col - 1).clamp(0, lineLen < 0 ? 0 : lineLen);
+    // Cuộn trước rồi mới đặt con trỏ: jumpToLine ghi đè selection về đầu
+    // dòng, đặt con trỏ trước sẽ mất luôn cột `col` của lỗi.
+    _codeFieldKey.currentState?.jumpToLine(line);
     _controller!.value = TextEditingValue(
       text: text,
       selection: TextSelection.collapsed(offset: target.clamp(0, text.length)),
     );
-    _codeFieldKey.currentState?.jumpToLine(line);
     _focus.requestFocus();
   }
 
@@ -301,14 +303,20 @@ class EditorScreenState extends State<EditorScreen> {
 
   /// Cuộn editor tới vị trí con trỏ đang chọn.
   void _followSelection() {
-    final sel = _controller?.selection;
-    if (sel == null || !sel.isValid) return;
-    final text = _controller!.text;
+    final ctrl = _controller;
+    final sel = ctrl?.selection;
+    if (ctrl == null || sel == null || !sel.isValid) return;
+    final text = ctrl.text;
     var line = 0;
     for (var i = 0; i < sel.baseOffset && i < text.length; i++) {
       if (text.codeUnitAt(i) == 0x0A) line++;
     }
     _codeFieldKey.currentState?.jumpToLine(line + 1);
+    // jumpToLine đặt con trỏ về đầu dòng — khôi phục selection của kết quả
+    // tìm/thay thế, nếu không bấm Tiếp/Trước chỉ đưa con trỏ về đầu dòng.
+    if (ctrl.selection != sel) {
+      ctrl.value = TextEditingValue(text: text, selection: sel);
+    }
   }
 
   void _replaceCurrent() {
