@@ -295,7 +295,7 @@ class _LevelCard extends StatelessWidget {
                   style: TextStyle(
                     color: unlocked
                         ? (current ? kGameAccent : kGameText)
-                        : kGameTextDim.withValues(alpha: 0.5),
+                        : kGameTextDim.withValues(alpha: 0.65),
                     fontSize: 26,
                     fontWeight: FontWeight.w900,
                     height: 1.0,
@@ -317,7 +317,7 @@ class _LevelCard extends StatelessWidget {
                 overflow: TextOverflow.ellipsis,
                 textAlign: TextAlign.center,
                 style: TextStyle(
-                  color: unlocked ? kGameTextDim : kGameTextDim.withValues(alpha: 0.5),
+                  color: unlocked ? kGameTextDim : kGameTextDim.withValues(alpha: 0.65),
                   fontSize: 11,
                   fontWeight: FontWeight.w600,
                 ),
