@@ -281,5 +281,18 @@ void main() {
             reason: 'màn ${lv.id}: route chuẩn phải đạt 3★');
       }
     });
+
+    test('id cũ trong file lưu không làm sai allDone/totalStars', () async {
+      final p = await fresh();
+      // Tiến độ của màn không còn trong kGameLevels (danh sách màn đổi giữa
+      // các bản app) — phải bị bỏ qua khi tính tổng, không tính nhầm.
+      p.stars['id_da_xoa'] = 3;
+      for (final lv in kGameLevels) {
+        p.recordWin(lv, lv.par);
+      }
+      expect(p.allDone, isTrue);
+      expect(p.totalStars, kGameLevels.length * 3);
+      expect(p.totalStars, p.maxStars);
+    });
   });
 }
