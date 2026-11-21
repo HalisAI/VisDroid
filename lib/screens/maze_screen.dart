@@ -110,6 +110,11 @@ class _MazeScreenState extends State<MazeScreen> with TickerProviderStateMixin {
     _step.stop();
     _shake.stop();
     _winAnim.stop();
+    // Giá trị về 0 chứ không chỉ stop: dừng giữa chừng để value "đóng băng"
+    // — shake hỏng giữa đường thì board lệch hẳn cho tới lần shake sau.
+    _step.value = 0;
+    _shake.value = 0;
+    _winAnim.value = 0;
     _outcome = null;
     _prevFrame = null;
     _frameIdx = 0;
