@@ -86,8 +86,14 @@ class MazeLevel {
   int get cols => grid.first.length;
   int get rows => grid.length;
 
-  bool isWall(Cell c) =>
-      c.y < 0 || c.y >= rows || c.x < 0 || c.x >= cols || grid[c.y][c.x] == '#';
+  /// Ngoài lưới hoặc gặp `#` đều là tường. Soi độ dài TỪNG hàng: lưới lệch
+  /// hàng (hàng ngắn hơn hàng đầu) phải trả về tường, không RangeError index.
+  bool isWall(Cell c) {
+    if (c.y < 0 || c.y >= rows || c.x < 0) return true;
+    final row = grid[c.y];
+    if (c.x >= row.length) return true;
+    return row[c.x] == '#';
+  }
 
   Cell get start => _find('S');
   Cell get goal => _find('C');

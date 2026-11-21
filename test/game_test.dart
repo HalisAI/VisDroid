@@ -117,6 +117,44 @@ void main() {
     });
   });
 
+  group('MazeLevel — lưới lệch hàng', () {
+    // Hàng 2 ngắn hơn hàng đầu (4 < 5) — cố tình lệch cột, không qua level
+    // thật (levels.dart có test riêng bảo lưới đều cột).
+    final lv = MazeLevel(
+      id: 'test-lech-hang',
+      world: 1,
+      title: 'test',
+      task: 'test',
+      grid: ['#####', '#S.C'],
+      startFacing: Facing.east,
+      starterCode: '',
+      hint: '',
+      par: 2,
+    );
+
+    test('isWall: ngoài hàng ngắn là tường, không RangeError', () {
+      expect(lv.isWall(const Cell(4, 1)), isTrue); // (4,1) ngoài hàng 2.
+      expect(lv.isWall(const Cell(-1, 1)), isTrue);
+      expect(lv.isWall(const Cell(2, 1)), isFalse); // ô sàn trong hàng.
+      expect(lv.isWall(const Cell(0, 1)), isTrue); // '#' thường.
+    });
+
+    test('simulate trên lưới lệch hàng: đâm "tường" ngoài hàng thay vì crash', () {
+      final pr = parseCommands('tien 4\n');
+      final oc = simulate(lv, pr.cmds);
+      expect(oc.win, isFalse);
+      expect(oc.failMsg, contains('đâm tường'));
+      expect(oc.failStep, 1);
+    });
+
+    test('simulate trên lưới lệch hàng: route trong hàng vẫn thắng', () {
+      final pr = parseCommands('tien 2\n');
+      final oc = simulate(lv, pr.cmds);
+      expect(oc.win, isTrue, reason: oc.failMsg);
+      expect(oc.frames.last.at, lv.goal);
+    });
+  });
+
   group('simulate — 10 route giải thật phải WIN đúng par', () {
     for (final lv in kGameLevels) {
       test('màn ${lv.id} (${lv.title})', () {
