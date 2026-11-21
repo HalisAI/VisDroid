@@ -83,6 +83,39 @@ void main() {
       expect(pr.ok, isFalse);
       expect(pr.error, contains('tổng số bước đi quá 500'));
     });
+
+    test('thừa tab/khoảng trắng quanh lệnh vẫn đọc được', () {
+      final pr = parseCommands('tien 5\t\n  phai  \n');
+      expect(pr.ok, isTrue);
+      expect(pr.cmds.map((c) => c.kind).toList(),
+          [CmdKind.forward, CmdKind.turnRight]);
+    });
+
+    test('phân biệt hoa thường là chủ ý: TIEN là dòng lạ', () {
+      // Helper in đúng "tien {n}" thường (scripts/game-snippets) — chữ hoa
+      // không phải giao thức robot, báo lỗi cho người chơi sửa.
+      final pr = parseCommands('TIEN 5\n');
+      expect(pr.ok, isFalse);
+      expect(pr.error, contains('TIEN 5'));
+    });
+
+    test("'tien 5.0' → lỗi dòng 1 (chỉ nhận số nguyên)", () {
+      final pr = parseCommands('tien 5.0\n');
+      expect(pr.ok, isFalse);
+      expect(pr.errorLine, 1);
+    });
+
+    test('dòng lạ >1000 ký tự → lỗi nhưng echo bị cắt, không phình banner', () {
+      final pr = parseCommands('${'x' * 1200}\n');
+      expect(pr.ok, isFalse);
+      expect(pr.error!.length, lessThan(200));
+    });
+
+    test('số quá lớn trong lỗi cũng bị cắt bớt', () {
+      final pr = parseCommands('tien ${'9' * 300}\n');
+      expect(pr.ok, isFalse);
+      expect(pr.error!.length, lessThan(200));
+    });
   });
 
   group('khai báo màn chơi', () {
@@ -229,6 +262,44 @@ void main() {
         expect(lv.par <= lv.par, isTrue);
       });
     }
+  });
+
+  group('simulate — biên chạy', () {
+    // Màn giả lập có hành lang đi LỐI qua cờ: C ở (3,1), sàn (4,1), tường (5,1).
+    final lvQuaCo = MazeLevel(
+      id: 'test-qua-co',
+      world: 1,
+      title: 'test',
+      task: 'test',
+      grid: ['######', '#S.C.#', '######'],
+      startFacing: Facing.east,
+      starterCode: '',
+      hint: '',
+      par: 3,
+    );
+
+    test('tien 0: parse hợp lệ, không sinh bước — kết thúc ở S nên thua rõ ràng', () {
+      final pr = parseCommands('tien 0\n');
+      expect(pr.ok, isTrue);
+      final oc = simulate(_level('1'), pr.cmds);
+      expect(oc.frames.length, 1); // chỉ còn frame ban đầu, không frame di chuyển.
+      expect(oc.win, isFalse);
+      expect(oc.failMsg, contains('cờ'));
+    });
+
+    test('đi LỐI qua cờ rồi dừng sau nó → thua, thông điệp dạy đúng chỗ dừng', () {
+      final pr = parseCommands('tien 4\n');
+      final oc = simulate(lvQuaCo, pr.cmds);
+      expect(oc.win, isFalse);
+      expect(oc.failMsg, contains('NGAY trên ô cờ'));
+      expect(oc.frames.last.at, const Cell(4, 1));
+    });
+
+    test('dừng đúng ô cờ (không có đồ để nhặt) → thắng', () {
+      final pr = parseCommands('tien 3\n');
+      final oc = simulate(lvQuaCo, pr.cmds);
+      expect(oc.win, isTrue, reason: oc.failMsg);
+    });
   });
 
   group('simulate — thất bại có dạy học', () {

@@ -197,12 +197,19 @@ class ParseResult {
   bool get ok => error == null;
 }
 
+/// Cắt chuỗi được nhắc lại trong thông báo lỗi — dòng script 1000+ ký tự
+/// hay số `tien` 300 chữ số không được làm banner lỗi của người chơi thành
+/// một bức thư vô tận.
+String _echo(String s, [int max = 60]) =>
+    s.length <= max ? s : '${s.substring(0, max)}…';
+
 /// Phân tích stdout của script thành hàng lệnh.
 ///
 /// Quy tắc: mỗi dòng non-trống phải là một lệnh (`tien <n>` với 0 ≤ n ≤ 100,
 /// `trai`, `phai`, `nhat`); dòng trống hoặc bắt đầu bằng `#` (in debug) được bỏ
-/// qua; dòng khác ⇒ lỗi kèm vị trí để người chơi sửa. Giới hạn 500 lệnh VÀ 500
-/// bước đi (một lệnh `tien` sinh tới 100 bước) để hoạt ảnh không chạy vô hạn.
+/// qua; dòng khác ⇒ lỗi kèm vị trí để người chơi sửa. Phân biệt hoa thường là
+/// chủ ý (helper in đúng `"tien {n}"` thường). Giới hạn 500 lệnh VÀ 500 bước
+/// đi (một lệnh `tien` sinh tới 100 bước) để hoạt ảnh không chạy vô hạn.
 ParseResult parseCommands(String stdout) {
   final cmds = <GameCmd>[];
   var steps = 0; // tổng bước đi của mọi lệnh tien — cap theo BƯỚC.
@@ -218,7 +225,7 @@ ParseResult parseCommands(String stdout) {
       final n = int.tryParse(tenMatch.group(1)!);
       if (n == null || n > 100) {
         return ParseResult(const [], 'tien tối đa 100 bước mỗi lệnh '
-            '(nhận được ${tenMatch.group(1)!})', ln);
+            '(nhận được ${_echo(tenMatch.group(1)!, 24)})', ln);
       }
       steps += n;
       cmds.add(GameCmd(CmdKind.forward, n));
@@ -237,7 +244,7 @@ ParseResult parseCommands(String stdout) {
     }
     return ParseResult(
       const [],
-      "không hiểu dòng: '$s' — chỉ nhận: tien <số bước>, trai, phai, nhat",
+      "không hiểu dòng: '${_echo(s)}' — chỉ nhận: tien <số bước>, trai, phai, nhat",
       ln,
     );
   }
