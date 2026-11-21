@@ -58,6 +58,9 @@ class EditorScreenState extends State<EditorScreen> {
   bool _dirty = false;
   List<String> _args = const [];
 
+  /// Đang gán text bằng code (mở tệp) — không tính là người dùng sửa.
+  bool _silentAssign = false;
+
   /// Chấm đỏ gutter: dòng 0-based → mã lỗi, từ lần chạy/kiểm tra gần nhất.
   Map<int, String> _markers = const {};
 
@@ -102,8 +105,17 @@ class EditorScreenState extends State<EditorScreen> {
       _fileName = name;
       _dirty = false;
       _markers = const {};
-      _controller = CodeController(text: text, colors: _colors);
+      // Tái dùng controller thay vì tạo instance mới: thay controller làm
+      // CodeField mất listener _onChanged (mất dirty/auto-save/chấm đỏ)
+      // và controller cũ không bao giờ được dispose (leak).
+      _silentAssign = true;
+      // Gán value với selection rỗng trước (listener của CodeField bỏ qua
+      // auto-indent khi selection không hợp lệ), rồi mới đặt con trỏ đầu tệp.
+      _controller!.value = TextEditingValue(text: text);
+      _controller!.selection = TextSelection.collapsed(offset: 0);
+      _silentAssign = false;
     });
+    _refreshFind();
     widget.onFileOpened(name);
   }
 
@@ -152,7 +164,11 @@ class EditorScreenState extends State<EditorScreen> {
       _fileName = null;
       _dirty = false;
       _markers = const {};
-      _controller = CodeController(text: '', colors: _colors);
+      // Tái dùng controller như openFile — giữ listener của CodeField.
+      _silentAssign = true;
+      _controller!.value = TextEditingValue(text: '');
+      _controller!.selection = TextSelection.collapsed(offset: 0);
+      _silentAssign = false;
     });
     widget.onFileOpened(null);
   }
@@ -168,13 +184,14 @@ class EditorScreenState extends State<EditorScreen> {
       return;
     }
     if (_pushing) return;
-    await save(silent: true);
-    if (!mounted) return;
-    final text = _controller!.text;
-    final args = _args;
     _pushing = true;
+    if (mounted) setState(() {}); // khoá nút ▶/Kiểm tra ngay trong lúc chạy
     RunScreenResult? result;
     try {
+      await save(silent: true);
+      if (!mounted) return;
+      final text = _controller!.text;
+      final args = _args;
       result = await Navigator.push<RunScreenResult>(
         context,
         MaterialPageRoute<RunScreenResult>(
@@ -196,6 +213,7 @@ class EditorScreenState extends State<EditorScreen> {
       );
     } finally {
       _pushing = false;
+      if (mounted) setState(() {});
     }
     if (!mounted || result == null) return;
     if (result.jumpLine != null) {
@@ -232,11 +250,13 @@ class EditorScreenState extends State<EditorScreen> {
     final lineEnd = text.indexOf('\n', lineStart);
     final lineLen = (lineEnd < 0 ? text.length : lineEnd) - lineStart;
     final target = lineStart + (col - 1).clamp(0, lineLen < 0 ? 0 : lineLen);
+    // Cuộn trước rồi mới đặt con trỏ: jumpToLine ghi đè selection về đầu
+    // dòng, đặt con trỏ trước sẽ mất luôn cột `col` của lỗi.
+    _codeFieldKey.currentState?.jumpToLine(line);
     _controller!.value = TextEditingValue(
       text: text,
       selection: TextSelection.collapsed(offset: target.clamp(0, text.length)),
     );
-    _codeFieldKey.currentState?.jumpToLine(line);
     _focus.requestFocus();
   }
 
@@ -283,14 +303,20 @@ class EditorScreenState extends State<EditorScreen> {
 
   /// Cuộn editor tới vị trí con trỏ đang chọn.
   void _followSelection() {
-    final sel = _controller?.selection;
-    if (sel == null || !sel.isValid) return;
-    final text = _controller!.text;
+    final ctrl = _controller;
+    final sel = ctrl?.selection;
+    if (ctrl == null || sel == null || !sel.isValid) return;
+    final text = ctrl.text;
     var line = 0;
     for (var i = 0; i < sel.baseOffset && i < text.length; i++) {
       if (text.codeUnitAt(i) == 0x0A) line++;
     }
     _codeFieldKey.currentState?.jumpToLine(line + 1);
+    // jumpToLine đặt con trỏ về đầu dòng — khôi phục selection của kết quả
+    // tìm/thay thế, nếu không bấm Tiếp/Trước chỉ đưa con trỏ về đầu dòng.
+    if (ctrl.selection != sel) {
+      ctrl.value = TextEditingValue(text: text, selection: sel);
+    }
   }
 
   void _replaceCurrent() {
@@ -355,6 +381,7 @@ class EditorScreenState extends State<EditorScreen> {
       ),
     );
     final line = int.tryParse(ctrl.text) ?? 0;
+    ctrl.dispose();
     if (ok == true && line >= 1 && line <= total) {
       _jumpToLine(line, 1);
     }
@@ -427,6 +454,7 @@ class EditorScreenState extends State<EditorScreen> {
       setState(() => _args =
           ctrl.text.trim().isEmpty ? [] : ctrl.text.trim().split(RegExp(r'\s+')));
     }
+    ctrl.dispose();
   }
 
   /// Tạo tệp mới ngay từ màn soạn thảo (màn hình chào mừng).
@@ -456,6 +484,10 @@ class EditorScreenState extends State<EditorScreen> {
 
   void _scheduleDirty() {
     _debounce?.cancel();
+    // Gán text bằng code (mở tệp/xoá tệp) cũng báo listener — bỏ qua,
+    // không đánh dấu dirty cũng không hẹn giờ tự lưu. Huỷ trước để hẹn giờ
+    // của phím gõ dở không bắn sau khi tệp khác đã mở.
+    if (_silentAssign) return;
     _debounce = Timer(const Duration(milliseconds: 250), () {
       if (!mounted) return;
       if (!_dirty) setState(() => _dirty = true);
@@ -472,6 +504,16 @@ class EditorScreenState extends State<EditorScreen> {
   // ------------------------------------------------------------------
   // Build
   // ------------------------------------------------------------------
+
+  @override
+  void dispose() {
+    _debounce?.cancel();
+    _focus.dispose();
+    _findCtrl.dispose();
+    _replaceCtrl.dispose();
+    _controller?.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -525,11 +567,12 @@ class EditorScreenState extends State<EditorScreen> {
                 IconButton(
                   tooltip: t(context, S.check),
                   icon: const Icon(Icons.fact_check_outlined, size: 22),
-                  onPressed: () => _run(checkOnly: true),
+                  onPressed:
+                      _pushing ? null : () => _run(checkOnly: true),
                 ),
                 IconButton.filledTonal(
                   tooltip: t(context, S.run),
-                  onPressed: () => _run(),
+                  onPressed: _pushing ? null : () => _run(),
                   icon: const Icon(Icons.play_arrow, size: 26),
                 ),
                 PopupMenuButton<String>(

@@ -101,6 +101,8 @@ enum S {
   duration,
   checking,
   outputEmpty,
+  previewEmpty,
+  outputTruncated,
   noFileYet,
   noFileHint,
   filesCount,
@@ -261,6 +263,8 @@ const Map<S, String> _vi = {
   S.duration: 'Thời gian',
   S.checking: 'Đang kiểm tra…',
   S.outputEmpty: 'Chưa có kết quả — bấm ▶ để chạy',
+  S.previewEmpty: '(trống)',
+  S.outputTruncated: '(stdout quá lớn — chỉ hiện phần cuối)',
   S.noFileYet: 'Chưa mở tệp nào',
   S.noFileHint:
       'Tạo tệp ViScript đầu tiên của bạn hoặc mở một ví dụ mẫu để bắt đầu.',
@@ -396,6 +400,8 @@ const Map<S, String> _en = {
   S.duration: 'Time',
   S.checking: 'Checking…',
   S.outputEmpty: 'No output yet — tap ▶ to run',
+  S.previewEmpty: '(empty)',
+  S.outputTruncated: '(stdout too large — showing the tail)',
   S.noFileYet: 'No file opened',
   S.noFileHint:
       'Create your first ViScript file or open a bundled example to start.',

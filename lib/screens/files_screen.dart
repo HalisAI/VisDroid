@@ -202,6 +202,9 @@ class _FilesScreenState extends State<FilesScreen> {
     );
     if (newName == null || newName == name || !mounted) return;
     final normalized = VisProject.normalizeName(newName);
+    // Nhập lại đúng tên cũ (chỉ thêm khoảng cách/thiếu đuôi) — chuẩn hoá xong
+    // trùng tên cũ thì không làm gì, tránh báo nhầm 'Tên này đã có'.
+    if (normalized == name) return;
     if (!VisProject.validName(normalized)) {
       _snack(t(context, S.invalidName));
       return;
