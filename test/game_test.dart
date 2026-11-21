@@ -75,6 +75,14 @@ void main() {
     test('stdout trống → lỗi "không in ra lệnh"', () {
       expect(parseCommands('').ok, isFalse);
     });
+
+    test('cap 500 tính cả tổng bước đi: tien 100 × 6 → lỗi', () {
+      // 5 lệnh × 100 bước = 500 bước — đúng mốc, vẫn hợp lệ.
+      expect(parseCommands('tien 100\n' * 5).ok, isTrue);
+      final pr = parseCommands('tien 100\n' * 6);
+      expect(pr.ok, isFalse);
+      expect(pr.error, contains('tổng số bước đi quá 500'));
+    });
   });
 
   group('khai báo màn chơi', () {
