@@ -734,8 +734,12 @@ class _MazeScreenState extends State<MazeScreen> with TickerProviderStateMixin {
                       ),
                     ],
                     const SizedBox(height: 22),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
+                    // Wrap thay vì Row: font hệ thống phóng lớn thì nút xuống
+                    // dòng, không tràn ngang overlay.
+                    Wrap(
+                      alignment: WrapAlignment.center,
+                      spacing: 12,
+                      runSpacing: 8,
                       children: [
                         OutlinedButton(
                           style: OutlinedButton.styleFrom(
@@ -749,7 +753,6 @@ class _MazeScreenState extends State<MazeScreen> with TickerProviderStateMixin {
                           },
                           child: Text(t(context, S.gameReplay)),
                         ),
-                        const SizedBox(width: 12),
                         DecoratedBox(
                           decoration: BoxDecoration(
                             gradient: kRunButtonGradient,
