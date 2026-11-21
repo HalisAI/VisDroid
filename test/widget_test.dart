@@ -117,7 +117,9 @@ void main() {
       (tester) async {
     // Prefs file hỏng / ghi từ bản app khác — '7' vượt ThemeMode.values.
     final (state, _) = await _bootPrefs({'themeMode': '7', 'fontSize': '99'});
-    expect(state.themeMode, ThemeMode.system);
+    // So tên thay vì class: app dùng ThemeMode của material_ui, test dùng của
+    // flutter/material — hai enum khác class nhưng in giống nhau.
+    expect(state.themeMode.name, 'system');
     expect(state.fontSize, 24.0); // kẹp đúng mốc slider cỡ chữ (max 24).
   });
 

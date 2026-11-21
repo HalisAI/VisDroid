@@ -448,6 +448,7 @@ void main() {
           .defaultBinaryMessenger
           .setMockMethodCallHandler(ch, null));
       final p = await fresh();
+      await p.load(); // fresh() chỉ dựng đối tượng — phải load() mới đọc prefs.
       expect(p.starsOf(kGameLevels[0]), 3); // mục lành giữ nguyên
       expect(p.starsOf(kGameLevels[1]), 0); // 'ba' sai kiểu → bỏ, không xoá sạch
       expect(p.starsOf(kGameLevels[2]), 3); // 99 → kẹp trong 0..3
