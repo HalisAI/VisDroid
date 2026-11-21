@@ -112,6 +112,70 @@ class MazeLevel {
   }
 }
 
+/// Kiểm tra bất biến dữ liệu màn chơi, trả về danh sách mô tả lỗi (rỗng =
+/// mọi màn đều hợp lệ).
+///
+/// [MazeLevel] là const constructor nên không thể validate lúc dựng — hàm
+/// này là chốt kiểm tra cuối (gọi trong test với [kGameLevels], hoặc khi
+/// dựng màn bằng code). Soi sâu hơn `_find`/isWall lúc chơi: grid rỗng,
+/// hàng trống, hàng lệch cột, ký tự lạ ngoài `#.SCX`, đúng một `S`/một `C`
+/// mỗi màn, và `S`/`C`/`X` không đè tường. Không ném exception — mọi vấn đề
+/// được ghi vào danh sách để test in ra tất cả cùng lúc.
+List<String> validateLevels(List<MazeLevel> levels) {
+  final problems = <String>[];
+  final seenIds = <String>{};
+  for (final lv in levels) {
+    final tag = 'màn ${lv.id}';
+    if (!seenIds.add(lv.id)) problems.add('$tag: id bị trùng');
+    if (lv.grid.isEmpty) {
+      problems.add('$tag: grid rỗng');
+      continue;
+    }
+    var countS = 0, countC = 0;
+    Cell? sCell, cCell;
+    final items = <Cell>[];
+    final width = lv.grid.first.length;
+    for (var y = 0; y < lv.grid.length; y++) {
+      final row = lv.grid[y];
+      if (row.isEmpty) {
+        problems.add('$tag: hàng $y trống');
+        continue;
+      }
+      if (row.length != width) {
+        problems.add('$tag: hàng $y lệch cột (${row.length} ≠ $width)');
+      }
+      for (var x = 0; x < row.length; x++) {
+        final ch = row[x];
+        if (ch == 'S') {
+          countS++;
+          sCell = Cell(x, y);
+        } else if (ch == 'C') {
+          countC++;
+          cCell = Cell(x, y);
+        } else if (ch == 'X') {
+          items.add(Cell(x, y));
+        } else if (ch != '#' && ch != '.') {
+          problems.add('$tag: ký tự lạ "$ch" ở ô ($x,$y)');
+        }
+      }
+    }
+    if (countS != 1) problems.add('$tag: có $countS ô S (cần đúng 1)');
+    if (countC != 1) problems.add('$tag: có $countC ô C (cần đúng 1)');
+    // Ô ký tự của chính nó không bao giờ là '#', nhưng isWall soi cả mép
+    // từng hàng — giữ kiểm tra để bắt lưới dựng bằng code lệch mép.
+    if (sCell != null && lv.isWall(sCell)) {
+      problems.add('$tag: S đè tường ở $sCell');
+    }
+    if (cCell != null && lv.isWall(cCell)) {
+      problems.add('$tag: C đè tường ở $cCell');
+    }
+    for (final c in items) {
+      if (lv.isWall(c)) problems.add('$tag: X đè tường ở $c');
+    }
+  }
+  return problems;
+}
+
 /// Lệnh robot đọc được từ stdout.
 enum CmdKind { forward, turnLeft, turnRight, pickup }
 

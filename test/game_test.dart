@@ -116,6 +116,60 @@ void main() {
         expect(lv.starterCode, contains('fn di_tien'));
       }
     });
+
+    test('validateLevels: toàn bộ kGameLevels hợp lệ, không lỗi dữ liệu', () {
+      // Helper soi sâu trong maze.dart (grid rỗng/hàng trống/lệch cột/ký tự
+      // lạ/S-C trùng hay thiếu/S-C-X đè tường) — rỗng nghĩa là mọi màn sạch.
+      expect(validateLevels(kGameLevels), isEmpty);
+    });
+  });
+
+  group('validateLevels — bắt dữ liệu màn hỏng', () {
+    MazeLevel mk(List<String> grid) => MazeLevel(
+          id: 'test-mk',
+          world: 1,
+          title: '',
+          task: '',
+          grid: grid,
+          startFacing: Facing.east,
+          starterCode: '',
+          hint: '',
+          par: 1,
+        );
+
+    test('grid rỗng → báo lỗi, không ném "Bad state: No element"', () {
+      expect(validateLevels([mk(const [])]), isNotEmpty);
+    });
+
+    test('hàng trống → báo lỗi', () {
+      final p = validateLevels([mk(['####', '', '####'])]);
+      expect(p.join(' | '), contains('trống'));
+    });
+
+    test('hàng lệch cột → báo lỗi', () {
+      final p = validateLevels([mk(['####', '#S#'])]);
+      expect(p.join(' | '), contains('lệch cột'));
+    });
+
+    test('ký tự lạ ngoài #.SCX → báo lỗi', () {
+      final p = validateLevels([mk(['####', '#S?C#', '####'])]);
+      expect(p.join(' | '), contains('ký tự lạ'));
+    });
+
+    test('thiếu S / thiếu C → báo lỗi thay vì StateError khi truy cập start', () {
+      final p = validateLevels([mk(['####', '#..#', '####'])]);
+      expect(p.join(' | '), contains('ô S'));
+      expect(p.join(' | '), contains('ô C'));
+    });
+
+    test('hai ô S → báo lỗi', () {
+      final p = validateLevels([mk(['####', '#SS#', '####'])]);
+      expect(p.join(' | '), contains('2 ô S'));
+    });
+
+    test('lưới chuẩn 1 S 1 C → không lỗi', () {
+      expect(validateLevels([mk(['####', '#SC#', '####'])]), isEmpty);
+    });
   });
 
   group('MazeLevel — lưới lệch hàng', () {
