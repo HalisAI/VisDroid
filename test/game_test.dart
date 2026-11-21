@@ -291,7 +291,8 @@ void main() {
     });
 
     test('đi LỐI qua cờ rồi dừng sau nó → thua, thông điệp dạy đúng chỗ dừng', () {
-      final pr = parseCommands('tien 4\n');
+      // S ở (1,1), cờ ở (3,1): tien 3 đi QUA cờ, dừng ở (4,1).
+      final pr = parseCommands('tien 3\n');
       final oc = simulate(lvQuaCo, pr.cmds);
       expect(oc.win, isFalse);
       expect(oc.failMsg, contains('NGAY trên ô cờ'));
@@ -299,7 +300,7 @@ void main() {
     });
 
     test('dừng đúng ô cờ (không có đồ để nhặt) → thắng', () {
-      final pr = parseCommands('tien 3\n');
+      final pr = parseCommands('tien 2\n');
       final oc = simulate(lvQuaCo, pr.cmds);
       expect(oc.win, isTrue, reason: oc.failMsg);
     });
