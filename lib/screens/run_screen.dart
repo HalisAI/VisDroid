@@ -232,8 +232,12 @@ class _RunScreenState extends State<RunScreen> {
                   const SizedBox(height: 8),
                   _argsRow(cs),
                 ],
+                // Có lỗi engine (FFI/EngineException) cũng phải hiện khung
+                // output — trước đây chỉ có chip 'LỖI', người dùng không bao
+                // giờ đọc được thông điệp lỗi khi stdout trống và không có diag.
                 if (_output.isNotEmpty ||
-                    (_diags.isEmpty && _errorText == null)) ...[
+                    _errorText != null ||
+                    _diags.isEmpty) ...[
                   const SizedBox(height: 10),
                   _outputBox(cs),
                 ],
