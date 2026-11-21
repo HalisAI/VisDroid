@@ -175,6 +175,9 @@ class _MazeScreenState extends State<MazeScreen> with TickerProviderStateMixin {
         strictCaps: widget.appState.strictCaps,
         noExtern: true,
       );
+      // Chờ engine bất đồng bộ — người chơi có thể đã bấm quay về giữa chừng;
+      // dùng context/setState sau khi unmount là lỗi ngay lập tức.
+      if (!mounted) return;
       stdoutText = res.stdout;
       if (res.diags.isNotEmpty) {
         final d = res.diags.first;
@@ -251,6 +254,12 @@ class _MazeScreenState extends State<MazeScreen> with TickerProviderStateMixin {
       SoundFx.instance.win();
       _winAnim.forward(from: 0);
       setState(() => _showWin = true);
+    } else {
+      // Thua trong mô phỏng (đâm tường, sai ô, thiếu ngọc): phản hồi rung +
+      // âm + shake giống khi lỗi script — đúng thiết kế "rung khi thất bại".
+      HapticFeedback.heavyImpact();
+      SoundFx.instance.fail();
+      _shake.forward(from: 0);
     }
   }
 
@@ -501,13 +510,16 @@ class _MazeScreenState extends State<MazeScreen> with TickerProviderStateMixin {
     Widget text;
     if (_banner != null) {
       text = Text(_banner!, style: gameStateStyle(kGameDanger));
-    } else if (_running) {
+    } else if (_running && oc != null) {
       text = Text(
         '${t(context, S.gameStep)
             .replaceFirst('{i}', '$_frameIdx')
-            .replaceFirst('{n}', '${oc!.frames.length - 1}')}…',
+            .replaceFirst('{n}', '${oc.frames.length - 1}')}…',
         style: gameStateStyle(kGameAccent),
       );
+    } else if (_running) {
+      // Script đang chạy trong engine, chưa có frame mô phỏng để đếm bước.
+      text = Text(t(context, S.running), style: gameStateStyle(kGameAccent));
     } else if (oc != null && !oc.win && oc.failMsg != null) {
       text = Text(
         '${t(context, S.gameFail)}: ${oc.failMsg}',

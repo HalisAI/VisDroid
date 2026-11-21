@@ -19,7 +19,10 @@ const Color kGameAccentDark = Color(0xFF8A5A0B);
 
 /// Trạng thái.
 const Color kGameSuccess = Color(0xFF34D399);
-const Color kGameDanger = Color(0xFFEF4444);
+
+/// Đỏ cảnh báo — đỏ sáng đủ AA (5.6:1 trên panel, đỏ gạch 4.1:1 trước đó
+/// dưới ngưỡng 4.5:1 cho chữ 13px của banner lỗi / dòng "Chưa qua màn").
+const Color kGameDanger = Color(0xFFF87171);
 
 /// Chữ.
 const Color kGameText = Color(0xFFE8ECF8);

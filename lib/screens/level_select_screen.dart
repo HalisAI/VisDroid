@@ -5,6 +5,7 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show HapticFeedback;
 
 import '../core/l10n.dart';
 import '../core/settings.dart';
@@ -46,7 +47,16 @@ class _LevelSelectScreenState extends State<LevelSelectScreen> {
   }
 
   Future<void> _openLevel(int index) async {
-    if (!widget.progress.isUnlocked(index)) return;
+    if (!widget.progress.isUnlocked(index)) {
+      // Màn khoá: phản hồi rõ ràng (rung + thông báo) thay vì im lặng
+      // như bấm hụt — người chơi biết phải qua màn trước đã.
+      HapticFeedback.mediumImpact();
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(t(context, S.gameFail)),
+        duration: const Duration(seconds: 2),
+      ));
+      return;
+    }
     await Navigator.push<void>(
       context,
       MaterialPageRoute<void>(
@@ -257,7 +267,8 @@ class _LevelCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final lv = level;
     return GestureDetector(
-      onTap: unlocked ? onTap : null,
+      // Cả thẻ khoá cũng bắt bấm — _openLevel tự chặn và phản hồi rung/snackbar.
+      onTap: onTap,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 180),
         decoration: BoxDecoration(
@@ -284,7 +295,7 @@ class _LevelCard extends StatelessWidget {
                   style: TextStyle(
                     color: unlocked
                         ? (current ? kGameAccent : kGameText)
-                        : kGameTextDim.withValues(alpha: 0.5),
+                        : kGameTextDim.withValues(alpha: 0.65),
                     fontSize: 26,
                     fontWeight: FontWeight.w900,
                     height: 1.0,
@@ -306,7 +317,7 @@ class _LevelCard extends StatelessWidget {
                 overflow: TextOverflow.ellipsis,
                 textAlign: TextAlign.center,
                 style: TextStyle(
-                  color: unlocked ? kGameTextDim : kGameTextDim.withValues(alpha: 0.5),
+                  color: unlocked ? kGameTextDim : kGameTextDim.withValues(alpha: 0.65),
                   fontSize: 11,
                   fontWeight: FontWeight.w600,
                 ),

@@ -36,6 +36,15 @@ class SoundFx {
       }
     } catch (e) {
       debugPrint('SoundFx init bỏ qua: $e');
+      // Dọn player đã tạo trước khi lỗi (thiếu asset/thiết bị) — không thì
+      // mỗi lần init hỏng lại rò một nhóm player native.
+      for (final p in _players.values) {
+        try {
+          await p.dispose();
+        } catch (_) {
+          // Player hỏng sẵn thì bỏ qua — mục tiêu chỉ là không rò rỉ.
+        }
+      }
       _players.clear();
     }
   }
