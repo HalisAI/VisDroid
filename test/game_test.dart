@@ -65,6 +65,13 @@ void main() {
       expect(parseCommands('tien 0').ok, isTrue);
     });
 
+    test('số quá lớn (> 2^63) → lỗi sạch, không crash int.parse', () {
+      final pr = parseCommands('tien 99999999999999999999\n');
+      expect(pr.ok, isFalse);
+      expect(pr.error, contains('tien tối đa 100'));
+      expect(pr.errorLine, 1);
+    });
+
     test('stdout trống → lỗi "không in ra lệnh"', () {
       expect(parseCommands('').ok, isFalse);
     });

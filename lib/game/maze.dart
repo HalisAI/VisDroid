@@ -143,9 +143,12 @@ ParseResult parseCommands(String stdout) {
     if (s.isEmpty || s.startsWith('#')) continue;
     final tenMatch = RegExp(r'^tien\s+(\d+)$').firstMatch(s);
     if (tenMatch != null) {
-      final n = int.parse(tenMatch.group(1)!);
-      if (n > 100) {
-        return ParseResult(const [], 'tien tối đa 100 bước mỗi lệnh (nhận được $n)', ln);
+      // tryParse chứ không parse — số quá lớn (> 2^63) làm int.parse ném
+      // FormatException ngoài tầm bắt của màn chơi; coi như vi phạm giới hạn.
+      final n = int.tryParse(tenMatch.group(1)!);
+      if (n == null || n > 100) {
+        return ParseResult(const [], 'tien tối đa 100 bước mỗi lệnh '
+            '(nhận được ${tenMatch.group(1)!})', ln);
       }
       cmds.add(GameCmd(CmdKind.forward, n, ln));
       continue;
