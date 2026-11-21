@@ -184,13 +184,14 @@ class EditorScreenState extends State<EditorScreen> {
       return;
     }
     if (_pushing) return;
-    await save(silent: true);
-    if (!mounted) return;
-    final text = _controller!.text;
-    final args = _args;
     _pushing = true;
+    if (mounted) setState(() {}); // khoá nút ▶/Kiểm tra ngay trong lúc chạy
     RunScreenResult? result;
     try {
+      await save(silent: true);
+      if (!mounted) return;
+      final text = _controller!.text;
+      final args = _args;
       result = await Navigator.push<RunScreenResult>(
         context,
         MaterialPageRoute<RunScreenResult>(
@@ -212,6 +213,7 @@ class EditorScreenState extends State<EditorScreen> {
       );
     } finally {
       _pushing = false;
+      if (mounted) setState(() {});
     }
     if (!mounted || result == null) return;
     if (result.jumpLine != null) {
@@ -556,11 +558,12 @@ class EditorScreenState extends State<EditorScreen> {
                 IconButton(
                   tooltip: t(context, S.check),
                   icon: const Icon(Icons.fact_check_outlined, size: 22),
-                  onPressed: () => _run(checkOnly: true),
+                  onPressed:
+                      _pushing ? null : () => _run(checkOnly: true),
                 ),
                 IconButton.filledTonal(
                   tooltip: t(context, S.run),
-                  onPressed: () => _run(),
+                  onPressed: _pushing ? null : () => _run(),
                   icon: const Icon(Icons.play_arrow, size: 26),
                 ),
                 PopupMenuButton<String>(
