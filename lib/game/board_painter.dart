@@ -9,6 +9,7 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
+import 'game_theme.dart';
 import 'maze.dart';
 import 'sprites.dart';
 
@@ -86,9 +87,11 @@ class BoardPainter extends CustomPainter {
       final amp = cell * 0.10 * math.sin(t * math.pi) * (1 - t);
       dx = d.x * amp;
       dy = d.y * amp;
-      // Vòng đỏ cảnh báo quanh ô đâm.
+      // Vòng đỏ cảnh báo quanh ô đâm — màu thống nhất từ game_theme,
+      // fade alpha theo t như cũ.
       final bumpPaint = Paint()
-        ..color = Color.fromRGBO(239, 68, 68, (0.55 * (1 - t)).clamp(0.0, 1.0))
+        ..color = kGameDanger
+            .withValues(alpha: (0.55 * (1 - t)).clamp(0.0, 1.0).toDouble())
         ..style = PaintingStyle.stroke
         ..strokeWidth = cell * 0.06;
       canvas.drawCircle(
