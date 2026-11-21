@@ -463,10 +463,12 @@ class _MazeScreenState extends State<MazeScreen> with TickerProviderStateMixin {
           IconButton(
             icon: const Icon(Icons.lightbulb_outline,
                 color: kGameAccent, size: 22),
+            tooltip: t(context, S.gameHint),
             onPressed: _showHint,
           ),
           IconButton(
             icon: const Icon(Icons.restart_alt, color: kGameTextDim, size: 22),
+            tooltip: t(context, S.gameReset),
             onPressed: _confirmResetCode,
           ),
         ],
