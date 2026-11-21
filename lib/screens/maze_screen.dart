@@ -440,6 +440,8 @@ class _MazeScreenState extends State<MazeScreen> with TickerProviderStateMixin {
                 Text(
                   '${t(context, S.gameWorld)} ${_level.world} · '
                   '${t(context, S.gameLevel).toUpperCase()} ${_level.id}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
                     color: kGameTextDim,
                     fontSize: 10.5,
