@@ -100,9 +100,18 @@ class GameProgress extends ChangeNotifier {
     return kGameLevels.length - 1; // phá đảo — trả màn cuối.
   }
 
-  bool get allDone => stars.length == kGameLevels.length;
+  /// Đếm theo [kGameLevels] chứ không đếm map thô: file lưu có thể còn id cũ
+  /// không còn trong danh sách màn (danh sách thay đổi giữa các bản app) —
+  /// đếm map thô thì allDone/totalStars sai so với maxStars.
+  bool get allDone => kGameLevels.every((l) => starsOf(l) > 0);
 
-  int get totalStars => stars.values.fold(0, (a, b) => a + b);
+  int get totalStars {
+    var t = 0;
+    for (final l in kGameLevels) {
+      t += starsOf(l);
+    }
+    return t;
+  }
 
   int get maxStars => kGameLevels.length * 3;
 

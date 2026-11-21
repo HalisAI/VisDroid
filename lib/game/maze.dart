@@ -86,8 +86,14 @@ class MazeLevel {
   int get cols => grid.first.length;
   int get rows => grid.length;
 
-  bool isWall(Cell c) =>
-      c.y < 0 || c.y >= rows || c.x < 0 || c.x >= cols || grid[c.y][c.x] == '#';
+  /// Ngoài lưới hoặc gặp `#` đều là tường. Soi độ dài TỪNG hàng: lưới lệch
+  /// hàng (hàng ngắn hơn hàng đầu) phải trả về tường, không RangeError index.
+  bool isWall(Cell c) {
+    if (c.y < 0 || c.y >= rows || c.x < 0) return true;
+    final row = grid[c.y];
+    if (c.x >= row.length) return true;
+    return row[c.x] == '#';
+  }
 
   Cell get start => _find('S');
   Cell get goal => _find('C');
@@ -132,10 +138,11 @@ class ParseResult {
 ///
 /// Quy tắc: mỗi dòng non-trống phải là một lệnh (`tien <n>` với 0 ≤ n ≤ 100,
 /// `trai`, `phai`, `nhat`); dòng trống hoặc bắt đầu bằng `#` (in debug) được bỏ
-/// qua; dòng khác ⇒ lỗi kèm vị trí để người chơi sửa. Giới hạn 500 lệnh để
-/// hoạt ảnh không chạy vô hạn.
+/// qua; dòng khác ⇒ lỗi kèm vị trí để người chơi sửa. Giới hạn 500 lệnh VÀ 500
+/// bước đi (một lệnh `tien` sinh tới 100 bước) để hoạt ảnh không chạy vô hạn.
 ParseResult parseCommands(String stdout) {
   final cmds = <GameCmd>[];
+  var steps = 0; // tổng bước đi của mọi lệnh tien — cap theo BƯỚC.
   final lines = stdout.split('\n');
   for (var i = 0; i < lines.length; i++) {
     final ln = i + 1;
@@ -143,10 +150,14 @@ ParseResult parseCommands(String stdout) {
     if (s.isEmpty || s.startsWith('#')) continue;
     final tenMatch = RegExp(r'^tien\s+(\d+)$').firstMatch(s);
     if (tenMatch != null) {
-      final n = int.parse(tenMatch.group(1)!);
-      if (n > 100) {
-        return ParseResult(const [], 'tien tối đa 100 bước mỗi lệnh (nhận được $n)', ln);
+      // tryParse chứ không parse — số quá lớn (> 2^63) làm int.parse ném
+      // FormatException ngoài tầm bắt của màn chơi; coi như vi phạm giới hạn.
+      final n = int.tryParse(tenMatch.group(1)!);
+      if (n == null || n > 100) {
+        return ParseResult(const [], 'tien tối đa 100 bước mỗi lệnh '
+            '(nhận được ${tenMatch.group(1)!})', ln);
       }
+      steps += n;
       cmds.add(GameCmd(CmdKind.forward, n, ln));
       continue;
     }
@@ -169,6 +180,11 @@ ParseResult parseCommands(String stdout) {
   }
   if (cmds.length > 500) {
     return ParseResult(const [], 'quá 500 lệnh (>500) — script có vòng lặp vô hạn?', 0);
+  }
+  // Hoạt ảnh chạy theo BƯỚC (mỗi ô đi/quay/nhặt 1 frame), không theo số lệnh —
+  // `tien 100` × 5 đã là 500 frame dù chỉ 5 lệnh, nên phải cap cả tổng bước.
+  if (steps > 500) {
+    return ParseResult(const [], 'tổng số bước đi quá 500 (>500) — script có vòng lặp vô hạn?', 0);
   }
   if (cmds.isEmpty) {
     return ParseResult(const [], 'script không in ra lệnh nào — hãy gọi các hàm ra lệnh', 0);
