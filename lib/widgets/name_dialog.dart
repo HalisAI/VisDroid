@@ -35,5 +35,5 @@ Future<String?> askFileName(
         ),
       ],
     ),
-  );
+  ).whenComplete(ctrl.dispose);
 }

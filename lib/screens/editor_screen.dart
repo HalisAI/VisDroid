@@ -146,14 +146,30 @@ class EditorScreenState extends State<EditorScreen> {
 
   Future<void> renameFile(String newName) async {
     final old = _fileName;
-    if (old == null || newName == old) return;
+    if (old == null) return;
+    final normalized = VisProject.normalizeName(newName);
+    // Chuẩn hoá xong trùng tên cũ (chỉ thêm khoảng cách/thiếu đuôi) — không làm gì,
+    // tránh báo nhầm 'Tên này đã có' (như files_screen).
+    if (normalized == old) return;
+    if (!VisProject.validName(normalized)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(t(context, S.invalidName))),
+      );
+      return;
+    }
+    if (widget.project.exists(normalized)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(t(context, S.nameExists))),
+      );
+      return;
+    }
     await save();
-    widget.project.rename(old, newName);
+    widget.project.rename(old, normalized);
     setState(() {
-      _fileName = newName;
+      _fileName = normalized;
       _dirty = false;
     });
-    widget.onFileOpened(newName);
+    widget.onFileOpened(normalized);
   }
 
   Future<void> deleteCurrent() async {

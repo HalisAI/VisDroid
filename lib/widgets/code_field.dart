@@ -208,12 +208,17 @@ class CodeFieldState extends State<CodeField> {
   void insert(String s) {
     final sel = widget.controller.selection;
     final text = widget.controller.text;
-    final start = sel.isValid ? sel.start : text.length;
-    final end = sel.isValid && !sel.isCollapsed ? sel.end : start;
-    final newText = text.replaceRange(start, end, s);
+    // Kéo chọn phải→trái cho start > end — hoán đổi để replaceRange không RangeError.
+    final lo = sel.isValid
+        ? (sel.start < sel.end ? sel.start : sel.end)
+        : text.length;
+    final hi = sel.isValid && !sel.isCollapsed
+        ? (sel.end > sel.start ? sel.end : sel.start)
+        : lo;
+    final newText = text.replaceRange(lo, hi, s);
     widget.controller.value = TextEditingValue(
       text: newText,
-      selection: TextSelection.collapsed(offset: start + s.length),
+      selection: TextSelection.collapsed(offset: lo + s.length),
     );
     widget.focusNode.requestFocus();
   }

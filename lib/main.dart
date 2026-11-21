@@ -154,7 +154,7 @@ class _ShellState extends State<Shell> {
               useVm: widget.state.useVm,
               strictCaps: widget.state.strictCaps,
               noExtern: widget.state.noExtern,
-              onFileOpened: (name) => _lastFileName = name,
+              onFileOpened: (name) => setState(() => _lastFileName = name),
               fontSize: widget.state.fontSize,
               autoSave: widget.state.autoSave,
               onWantFiles: () => setState(() => _tab = 1),
