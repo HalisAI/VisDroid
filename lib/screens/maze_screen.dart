@@ -88,6 +88,12 @@ class _MazeScreenState extends State<MazeScreen> with TickerProviderStateMixin {
     _reloadController();
     _step.addStatusListener(_onStepStatus);
     SoundFx.instance.init();
+    // Sprite có thể chưa nạp xong nếu vào thẳng màn chơi nhanh hơn màn chọn
+    // (painter dùng các field `late` của SpriteSet) — nạp xong thì build lại
+    // để vẽ bàn chơi; load() có fallback nên không bao giờ ném lỗi.
+    SpriteSet.instance.load().then((_) {
+      if (mounted) setState(() {});
+    });
   }
 
   void _reloadController() {
@@ -486,16 +492,19 @@ class _MazeScreenState extends State<MazeScreen> with TickerProviderStateMixin {
                       border: Border.all(color: kGamePanelBorder, width: 2),
                       borderRadius: BorderRadius.circular(18),
                     ),
-                    child: CustomPaint(
-                      painter: BoardPainter(
-                        level: _level,
-                        from: prevFrame,
-                        to: curFrame,
-                        t: _step.value,
-                        sprites: SpriteSet.instance,
-                      ),
-                      child: const SizedBox.expand(),
-                    ),
+                    child: SpriteSet.instance.ready
+                        ? CustomPaint(
+                            painter: BoardPainter(
+                              level: _level,
+                              from: prevFrame,
+                              to: curFrame,
+                              t: _step.value,
+                              sprites: SpriteSet.instance,
+                            ),
+                            child: const SizedBox.expand(),
+                          )
+                        // Chưa nạp xong: chỉ nền panel, không đụng field `late`.
+                        : const SizedBox.expand(),
                   ),
                 ),
               );
