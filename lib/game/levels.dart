@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: MIT
-/// Danh sách màn chơi của Mê cung ViScript — 10 màn / 3 thế giới.
+/// Danh sách màn chơi của Mê cung ViScript — 15 màn / 4 thế giới.
 ///
-/// Grid, hướng xuất phát và `par` (số bước chuẩn của route tối ưu) đều được
-/// kiểm chứng bằng engine thật + simulator (`scripts/verify_levels_v2.py`,
-/// `scripts/game-snippets/v2/man-*.vis` — route giải nằm trong JSON
-/// `work/game-assets/levels-verified.json`). Đừng đổi grid/par nếu chưa chạy
-/// lại toàn bộ chuỗi kiểm chứng.
+/// Thế giới 1–3: grid, hướng xuất phát và `par` (số bước chuẩn của route
+/// tối ưu) đã kiểm chứng bằng engine thật + simulator (`scripts/verify_levels_v2.py`,
+/// route giải trong JSON `work/game-assets/levels-verified.json`).
+/// Thế giới 4 (màn 11–15): par là BFS tối ưu tuyệt đối, kiểm chứng bằng
+/// `scripts/design_levels_v4.py` (BFS + mini-sim khớp semantics `simulate()`).
+/// Lưu ý: par màn 6 là 14 (bậc thang rẽ đủ mỗi bậc — par sư phạm, route dạy
+/// học trong hint phải đạt 3★) dù đường đi tối ưu thuần túy chỉ 12 bước.
+/// Đừng đổi grid/par nếu chưa chạy lại chuỗi kiểm chứng.
 library;
 
 import 'maze.dart';
@@ -23,6 +26,7 @@ const List<GameWorld> kGameWorlds = [
   GameWorld(1, 'Hành lang khởi động', 'Gọi lệnh đơn giản, làm quen robot'),
   GameWorld(2, 'Sức mạnh vòng lặp', 'for, hàm riêng — code gọn gàng hơn'),
   GameWorld(3, 'Săn kho báu', 'Nhặt ngọc, mê cung thật sự'),
+  GameWorld(4, 'Tổng kết hành trình', 'Cửa bẫy, ngã tư, hai tầng — dùng mọi kỹ năng'),
 ];
 
 /// Màn cuối của thế giới 1 (theo thứ tự trong [kGameLevels] bên dưới).
@@ -258,9 +262,9 @@ $helperCode
   MazeLevel(
     id: '10',
     world: 3,
-    title: 'Kho báu cuối',
-    task: 'Màn cuối! Mê cung snake thật sự: 2 viên ngọc rải rác trên đường. '
-        'Dùng mọi thứ đã học — tuần tự, rẽ, vòng lặp, hàm — để trùm màn cuối.',
+    title: 'Rừng ngọc snake',
+    task: 'Mê cung snake thật sự: 2 viên ngọc rải rác trên đường. '
+        'Đây là màn khó nhất của thế giới Săn kho báu — chia nhỏ từng đoạn!',
     startFacing: Facing.east,
     par: 24,
     grid: [
@@ -275,10 +279,148 @@ $helperCode
     hint: 'Chia nhỏ từng đoạn như kế hoạch: tới ngọc 1 → nhặt → hết hàng → '
         'xuống → tới ngọc 2 → nhặt → xuống → hết hành lang tới cờ. '
         'Route chuẩn: 24 bước.',
-    starterCode: '''
+      starterCode: '''
 $helperCode
 
 # Màn 10: mê cung cuối — dùng mọi thứ đã học!
+
+''',
+  ),
+
+  // ── Thế giới 4 · Tổng kết hành trình ───────────────────────────────
+  // Màn 11–15: par = BFS tối ưu tuyệt đối (scripts/design_levels_v4.py,
+  // route mô phỏng lại bằng simulate() trong test/levels_extra_test.dart).
+  MazeLevel(
+    id: '11',
+    world: 4,
+    title: 'Bẫy ngọc',
+    task: 'Ngọc nằm giữa đường — nhặt đúng chỗ rồi rẽ xuống ngay. '
+        'Đi tiếp về phía đông là ổ cụt: nhìn trước đường đi, đừng lọt bẫy!',
+    startFacing: Facing.east,
+    par: 11,
+    grid: [
+      '#########',
+      '#S..X...#',
+      '###.#.###',
+      '#......C#',
+      '#########',
+    ],
+    hint: 'Route tối ưu: di_tien(3) → nhat_do() → di_tien(1) → re_phai() → '
+        'di_tien(2) → re_trai() → di_tien(2). '
+        'Nhặt ngọc ở giữa hành lang rồi rẽ xuống — ổ bên phải là bẫy!',
+    starterCode: '''
+$helperCode
+
+# Màn 11: Bẫy ngọc — nhìn trước đường đi!
+
+''',
+  ),
+  MazeLevel(
+    id: '12',
+    world: 4,
+    title: 'Săn ba ngọc',
+    task: 'Ba viên ngọc rải trên hành lang trên, cờ ở hành lang dưới. '
+        'Sau khi quay đầu nhặt viên cuối, lùi đúng 1 ô để vào hố xuống!',
+    startFacing: Facing.east,
+    par: 20,
+    grid: [
+      '###########',
+      '#S.X..X..X#',
+      '#####.##.##',
+      '#.....C...#',
+      '###########',
+    ],
+    hint: 'Route tối ưu: di_tien(2) → nhat_do() → di_tien(3) → nhat_do() → '
+        'di_tien(3) → re_trai() → re_trai() → nhat_do() → di_tien(1) → '
+        're_trai() → di_tien(2) → re_phai() → di_tien(2). '
+        'Hai lần re_trai() liên tiếp = quay ngược 180°!',
+    starterCode: '''
+$helperCode
+
+# Màn 12: Săn ba ngọc — kế hoạch trước, code sau!
+
+''',
+  ),
+  MazeLevel(
+    id: '13',
+    world: 4,
+    title: 'Ngã tư đảo',
+    task: 'Hai viên ngọc ở đầu hai nhánh của ngã tư. '
+        'Thứ tự ghé hai nhánh quyết định tổng số bước — vẽ route trên giấy trước!',
+    startFacing: Facing.east,
+    par: 25,
+    grid: [
+      '###########',
+      '#####X#####',
+      '#####.#####',
+      '#S.......X#',
+      '#####.#####',
+      '#####C#####',
+      '###########',
+    ],
+    hint: 'Route tối ưu: di_tien(8) → re_trai() → re_trai() → nhat_do() → '
+        'di_tien(4) → re_phai() → di_tien(2) → re_trai() → re_trai() → '
+        'nhat_do() → di_tien(4). '
+        'Ghé nhánh đông trước, nhánh bắc sau — thử đảo thứ tự để thấy vì sao tốn thêm bước!',
+    starterCode: '''
+$helperCode
+
+# Màn 13: Ngã tư đảo — thứ tự ghé nhánh quan trọng!
+
+''',
+  ),
+  MazeLevel(
+    id: '14',
+    world: 4,
+    title: 'Hai tầng quanh hồ',
+    task: 'Đường hai tầng chữ S vòng quanh hồ đá: xuống tầng dưới qua khe hở '
+        'bên phải, viên ngọc nằm ở đầu phía tây tầng giữa.',
+    startFacing: Facing.east,
+    par: 25,
+    grid: [
+      '##########',
+      '#S.......#',
+      '#######..#',
+      '#X.......#',
+      '##.#######',
+      '#C.......#',
+      '##########',
+    ],
+    hint: 'Route tối ưu: di_tien(6) → re_phai() → di_tien(2) → re_phai() → '
+        'di_tien(6) → re_trai() → re_trai() → nhat_do() → di_tien(1) → '
+        're_phai() → di_tien(2) → re_phai() → di_tien(1). '
+        'Ngọc ở góc tây tầng giữa — nhặt xong lùi 1 ô rồi mới xuống!',
+    starterCode: '''
+$helperCode
+
+# Màn 14: Hai tầng quanh hồ — snake kép quanh hồ đá!
+
+''',
+  ),
+  MazeLevel(
+    id: '15',
+    world: 4,
+    title: 'Kho báu cuối',
+    task: 'Màn cuối của hành trình! Ba viên ngọc trên hai tầng mê cung — '
+        'dùng mọi kỹ năng đã học: đếm ô, quay 180°, chọn lộ trình ngắn nhất.',
+    startFacing: Facing.east,
+    par: 34,
+    grid: [
+      '#############',
+      '#S...X.....X#',
+      '######.######',
+      '#..X....C...#',
+      '#############',
+    ],
+    hint: 'Route tối ưu: di_tien(4) → nhat_do() → di_tien(6) → re_trai() → '
+        're_trai() → nhat_do() → di_tien(5) → re_trai() → di_tien(2) → '
+        're_phai() → di_tien(3) → re_trai() → re_trai() → nhat_do() → '
+        'di_tien(5). '
+        'Chia nhỏ từng đoạn: ngọc 1 → ngọc 2 quay đầu → xuống tầng dưới → ngọc 3 → cờ.',
+    starterCode: '''
+$helperCode
+
+# Màn 15: Kho báu cuối — màn trùm của hành trình!
 
 ''',
   ),
