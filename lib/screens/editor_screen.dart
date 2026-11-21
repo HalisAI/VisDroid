@@ -371,6 +371,7 @@ class EditorScreenState extends State<EditorScreen> {
       ),
     );
     final line = int.tryParse(ctrl.text) ?? 0;
+    ctrl.dispose();
     if (ok == true && line >= 1 && line <= total) {
       _jumpToLine(line, 1);
     }
@@ -443,6 +444,7 @@ class EditorScreenState extends State<EditorScreen> {
       setState(() => _args =
           ctrl.text.trim().isEmpty ? [] : ctrl.text.trim().split(RegExp(r'\s+')));
     }
+    ctrl.dispose();
   }
 
   /// Tạo tệp mới ngay từ màn soạn thảo (màn hình chào mừng).
@@ -491,6 +493,16 @@ class EditorScreenState extends State<EditorScreen> {
   // ------------------------------------------------------------------
   // Build
   // ------------------------------------------------------------------
+
+  @override
+  void dispose() {
+    _debounce?.cancel();
+    _focus.dispose();
+    _findCtrl.dispose();
+    _replaceCtrl.dispose();
+    _controller?.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
