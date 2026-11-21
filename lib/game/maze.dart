@@ -116,11 +116,10 @@ class MazeLevel {
 enum CmdKind { forward, turnLeft, turnRight, pickup }
 
 class GameCmd {
-  const GameCmd(this.kind, this.n, this.stdoutLine);
+  const GameCmd(this.kind, this.n);
 
   final CmdKind kind;
   final int n; // số bước với `tien`, không dùng cho lệnh khác.
-  final int stdoutLine; // dòng trong stdout (1-based) — báo lỗi dễ hiểu.
 }
 
 /// Kết quả phân tích stdout thành hàng lệnh.
@@ -158,18 +157,18 @@ ParseResult parseCommands(String stdout) {
             '(nhận được ${tenMatch.group(1)!})', ln);
       }
       steps += n;
-      cmds.add(GameCmd(CmdKind.forward, n, ln));
+      cmds.add(GameCmd(CmdKind.forward, n));
       continue;
     }
     switch (s) {
       case 'trai':
-        cmds.add(GameCmd(CmdKind.turnLeft, 0, ln));
+        cmds.add(GameCmd(CmdKind.turnLeft, 0));
         continue;
       case 'phai':
-        cmds.add(GameCmd(CmdKind.turnRight, 0, ln));
+        cmds.add(GameCmd(CmdKind.turnRight, 0));
         continue;
       case 'nhat':
-        cmds.add(GameCmd(CmdKind.pickup, 0, ln));
+        cmds.add(GameCmd(CmdKind.pickup, 0));
         continue;
     }
     return ParseResult(
@@ -218,24 +217,14 @@ class SimOutcome {
   const SimOutcome({
     required this.win,
     required this.frames,
-    required this.stepCount,
     this.failMsg,
     this.failStep,
   });
 
   final bool win;
   final List<SimFrame> frames; // frames[0] = trạng thái ban đầu.
-  final int stepCount; // tổng lệnh.
   final String? failMsg; // khác null khi thua.
   final int? failStep; // số thứ tự lệnh gây thua (1-based).
-
-  /// Chạy tới đây thì dừng hoạt ảnh (chỉ số frame cuối).
-  int get lastFrame => failMsg == null ? frames.length - 1 : failFrame;
-
-  int get failFrame {
-    // frames: mỗi lệnh sinh 1..n frame; fail frame là frame cuối.
-    return frames.length - 1;
-  }
 }
 
 /// Chạy mô phỏng hàng lệnh trên bản đồ — không đụng UI.
@@ -270,7 +259,6 @@ SimOutcome simulate(MazeLevel level, List<GameCmd> cmds) {
           return SimOutcome(
             win: false,
             frames: frames,
-            stepCount: cmds.length,
             failMsg: "không có đồ để nhặt ở ô $at (lệnh thứ ${i + 1})",
             failStep: i + 1,
           );
@@ -290,7 +278,6 @@ SimOutcome simulate(MazeLevel level, List<GameCmd> cmds) {
             return SimOutcome(
               win: false,
               frames: frames,
-              stepCount: cmds.length,
               failMsg: 'đâm tường ở ô $next (lệnh thứ ${i + 1})',
               failStep: i + 1,
             );
@@ -317,7 +304,6 @@ SimOutcome simulate(MazeLevel level, List<GameCmd> cmds) {
   return SimOutcome(
     win: win,
     frames: frames,
-    stepCount: cmds.length,
     failMsg: failMsg,
     failStep: failStep,
   );
