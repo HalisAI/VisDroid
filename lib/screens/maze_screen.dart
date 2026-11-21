@@ -254,6 +254,12 @@ class _MazeScreenState extends State<MazeScreen> with TickerProviderStateMixin {
       SoundFx.instance.win();
       _winAnim.forward(from: 0);
       setState(() => _showWin = true);
+    } else {
+      // Thua trong mô phỏng (đâm tường, sai ô, thiếu ngọc): phản hồi rung +
+      // âm + shake giống khi lỗi script — đúng thiết kế "rung khi thất bại".
+      HapticFeedback.heavyImpact();
+      SoundFx.instance.fail();
+      _shake.forward(from: 0);
     }
   }
 
