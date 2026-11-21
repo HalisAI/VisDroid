@@ -483,10 +483,11 @@ class EditorScreenState extends State<EditorScreen> {
   }
 
   void _scheduleDirty() {
-    // Gán text bằng code (mở tệp/xoá tệp) cũng báo listener — bỏ qua,
-    // không đánh dấu dirty cũng không hẹn giờ tự lưu.
-    if (_silentAssign) return;
     _debounce?.cancel();
+    // Gán text bằng code (mở tệp/xoá tệp) cũng báo listener — bỏ qua,
+    // không đánh dấu dirty cũng không hẹn giờ tự lưu. Huỷ trước để hẹn giờ
+    // của phím gõ dở không bắn sau khi tệp khác đã mở.
+    if (_silentAssign) return;
     _debounce = Timer(const Duration(milliseconds: 250), () {
       if (!mounted) return;
       if (!_dirty) setState(() => _dirty = true);
