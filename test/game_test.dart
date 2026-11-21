@@ -7,6 +7,9 @@
 /// với `par` khai báo trong levels.dart.
 library;
 
+import 'dart:convert';
+
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:visdroid/core/settings.dart';
 import 'package:visdroid/game/levels.dart';
@@ -425,6 +428,34 @@ void main() {
       expect(p.allDone, isTrue);
       expect(p.totalStars, kGameLevels.length * 3);
       expect(p.totalStars, p.maxStars);
+    });
+
+    testWidgets('file lưu lẫn kiểu lạ: mục sai kiểu bị bỏ, phần lành vẫn giữ', (tester) async {
+      const ch = MethodChannel('visdroid/prefs');
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(ch, (m) async {
+        if (m.method != 'get') return null;
+        return jsonEncode({
+          'game_progress_v2': jsonEncode({
+            'stars': {'1': 3, '2': 'ba', '3': 99, '4': -2},
+            'best': {'1': 5, '2': [1]},
+            'code': {'1': 'ok', '2': 42},
+          }),
+        });
+      });
+      addTearDown(() => TestDefaultBinaryMessengerBinding.instance
+          .defaultBinaryMessenger
+          .setMockMethodCallHandler(ch, null));
+      final p = await fresh();
+      expect(p.starsOf(kGameLevels[0]), 3); // mục lành giữ nguyên
+      expect(p.starsOf(kGameLevels[1]), 0); // 'ba' sai kiểu → bỏ, không xoá sạch
+      expect(p.starsOf(kGameLevels[2]), 3); // 99 → kẹp trong 0..3
+      expect(p.starsOf(kGameLevels[3]), 0); // âm → 0
+      expect(p.totalStars, p.maxStars - (kGameLevels.length - 2) * 3);
+      expect(p.bestOf(kGameLevels[0]), 5);
+      expect(p.bestOf(kGameLevels[1]), isNull); // list → bỏ
+      expect(p.codeOf(kGameLevels[0]), 'ok');
+      expect(p.codeOf(kGameLevels[1]), kGameLevels[1].starterCode); // 42 → bỏ
     });
   });
 }
