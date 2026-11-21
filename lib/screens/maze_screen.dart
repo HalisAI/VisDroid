@@ -504,13 +504,16 @@ class _MazeScreenState extends State<MazeScreen> with TickerProviderStateMixin {
     Widget text;
     if (_banner != null) {
       text = Text(_banner!, style: gameStateStyle(kGameDanger));
-    } else if (_running) {
+    } else if (_running && oc != null) {
       text = Text(
         '${t(context, S.gameStep)
             .replaceFirst('{i}', '$_frameIdx')
-            .replaceFirst('{n}', '${oc!.frames.length - 1}')}…',
+            .replaceFirst('{n}', '${oc.frames.length - 1}')}…',
         style: gameStateStyle(kGameAccent),
       );
+    } else if (_running) {
+      // Script đang chạy trong engine, chưa có frame mô phỏng để đếm bước.
+      text = Text(t(context, S.running), style: gameStateStyle(kGameAccent));
     } else if (oc != null && !oc.win && oc.failMsg != null) {
       text = Text(
         '${t(context, S.gameFail)}: ${oc.failMsg}',
