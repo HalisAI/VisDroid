@@ -175,6 +175,9 @@ class _MazeScreenState extends State<MazeScreen> with TickerProviderStateMixin {
         strictCaps: widget.appState.strictCaps,
         noExtern: true,
       );
+      // Chờ engine bất đồng bộ — người chơi có thể đã bấm quay về giữa chừng;
+      // dùng context/setState sau khi unmount là lỗi ngay lập tức.
+      if (!mounted) return;
       stdoutText = res.stdout;
       if (res.diags.isNotEmpty) {
         final d = res.diags.first;
