@@ -126,7 +126,9 @@ class _RunScreenState extends State<RunScreen> {
         steps = res.steps;
         final lines = res.stdout.trim();
         preview = lines.isEmpty
-            ? (res.diags.isNotEmpty ? res.diags.first.msg : '(trống)')
+            ? (res.diags.isNotEmpty
+                ? res.diags.first.msg
+                : t(context, S.previewEmpty))
             : lines.split('\n').first;
       }
     } catch (e) {
