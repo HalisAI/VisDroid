@@ -34,10 +34,12 @@ class BoardPainter extends CustomPainter {
     final cell = size.width / level.cols;
     final paint = Paint()..filterQuality = FilterQuality.medium;
 
-    // Sàn + tường
+    // Sàn + tường — soi độ dài TỪNG hàng như isWall: màn viết tay lệch hàng
+    // thì phần ngoài độ dài hàng coi như tường, không RangeError index.
     for (var y = 0; y < level.rows; y++) {
+      final row = level.grid[y];
       for (var x = 0; x < level.cols; x++) {
-        final img = level.grid[y][x] == '#'
+        final img = x >= row.length || row[x] == '#'
             ? sprites.wall
             : ((x + y) % 2 == 0 ? sprites.floorA : sprites.floorB);
         _drawImage(canvas, img, Offset(x * cell, y * cell), cell, cell, paint);
