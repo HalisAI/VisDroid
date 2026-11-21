@@ -88,6 +88,12 @@ class _MazeScreenState extends State<MazeScreen> with TickerProviderStateMixin {
     _reloadController();
     _step.addStatusListener(_onStepStatus);
     SoundFx.instance.init();
+    // Sprite có thể chưa nạp xong nếu vào thẳng màn chơi nhanh hơn màn chọn
+    // (painter dùng các field `late` của SpriteSet) — nạp xong thì build lại
+    // để vẽ bàn chơi; load() có fallback nên không bao giờ ném lỗi.
+    SpriteSet.instance.load().then((_) {
+      if (mounted) setState(() {});
+    });
   }
 
   void _reloadController() {
@@ -104,6 +110,11 @@ class _MazeScreenState extends State<MazeScreen> with TickerProviderStateMixin {
     _step.stop();
     _shake.stop();
     _winAnim.stop();
+    // Giá trị về 0 chứ không chỉ stop: dừng giữa chừng để value "đóng băng"
+    // — shake hỏng giữa đường thì board lệch hẳn cho tới lần shake sau.
+    _step.value = 0;
+    _shake.value = 0;
+    _winAnim.value = 0;
     _outcome = null;
     _prevFrame = null;
     _frameIdx = 0;
@@ -429,6 +440,8 @@ class _MazeScreenState extends State<MazeScreen> with TickerProviderStateMixin {
                 Text(
                   '${t(context, S.gameWorld)} ${_level.world} · '
                   '${t(context, S.gameLevel).toUpperCase()} ${_level.id}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
                     color: kGameTextDim,
                     fontSize: 10.5,
@@ -452,10 +465,12 @@ class _MazeScreenState extends State<MazeScreen> with TickerProviderStateMixin {
           IconButton(
             icon: const Icon(Icons.lightbulb_outline,
                 color: kGameAccent, size: 22),
+            tooltip: t(context, S.gameHint),
             onPressed: _showHint,
           ),
           IconButton(
             icon: const Icon(Icons.restart_alt, color: kGameTextDim, size: 22),
+            tooltip: t(context, S.gameReset),
             onPressed: _confirmResetCode,
           ),
         ],
@@ -486,16 +501,19 @@ class _MazeScreenState extends State<MazeScreen> with TickerProviderStateMixin {
                       border: Border.all(color: kGamePanelBorder, width: 2),
                       borderRadius: BorderRadius.circular(18),
                     ),
-                    child: CustomPaint(
-                      painter: BoardPainter(
-                        level: _level,
-                        from: prevFrame,
-                        to: curFrame,
-                        t: _step.value,
-                        sprites: SpriteSet.instance,
-                      ),
-                      child: const SizedBox.expand(),
-                    ),
+                    child: SpriteSet.instance.ready
+                        ? CustomPaint(
+                            painter: BoardPainter(
+                              level: _level,
+                              from: prevFrame,
+                              to: curFrame,
+                              t: _step.value,
+                              sprites: SpriteSet.instance,
+                            ),
+                            child: const SizedBox.expand(),
+                          )
+                        // Chưa nạp xong: chỉ nền panel, không đụng field `late`.
+                        : const SizedBox.expand(),
                   ),
                 ),
               );
@@ -725,8 +743,12 @@ class _MazeScreenState extends State<MazeScreen> with TickerProviderStateMixin {
                       ),
                     ],
                     const SizedBox(height: 22),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
+                    // Wrap thay vì Row: font hệ thống phóng lớn thì nút xuống
+                    // dòng, không tràn ngang overlay.
+                    Wrap(
+                      alignment: WrapAlignment.center,
+                      spacing: 12,
+                      runSpacing: 8,
                       children: [
                         OutlinedButton(
                           style: OutlinedButton.styleFrom(
@@ -740,7 +762,6 @@ class _MazeScreenState extends State<MazeScreen> with TickerProviderStateMixin {
                           },
                           child: Text(t(context, S.gameReplay)),
                         ),
-                        const SizedBox(width: 12),
                         DecoratedBox(
                           decoration: BoxDecoration(
                             gradient: kRunButtonGradient,
