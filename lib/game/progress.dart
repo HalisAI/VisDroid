@@ -43,23 +43,26 @@ class GameProgress extends ChangeNotifier {
       final bs = j['best'] as Map<String, dynamic>? ?? {};
       final cd = j['code'] as Map<String, dynamic>? ?? {};
       stars.clear();
-      stars.addEntries(
-        st.entries.whereType<MapEntry<String, dynamic>>().map(
-              (e) => MapEntry(e.key, (e.value as num).toInt()),
-            ),
-      );
+      // Lọc TỪNG mục thay vì `as num` cả map: một giá trị sai kiểu trong file
+      // lưu (vd. chuỗi thay số) chỉ mất mục đó, không ném ra catch ngoài làm
+      // xoá sạch cả tiến độ còn hợp lệ.
+      st.forEach((k, v) {
+        if (v is num) {
+          final s = v.toInt();
+          stars[k] = s < 0 ? 0 : (s > 3 ? 3 : s); // sao chỉ 0..3 — file dán bừa không làm totalStars vượt maxStars.
+        }
+      });
       bestSteps.clear();
-      bestSteps.addEntries(
-        bs.entries.whereType<MapEntry<String, dynamic>>().map(
-              (e) => MapEntry(e.key, (e.value as num).toInt()),
-            ),
-      );
+      bs.forEach((k, v) {
+        if (v is num) {
+          final s = v.toInt();
+          if (s >= 0) bestSteps[k] = s;
+        }
+      });
       code.clear();
-      code.addEntries(
-        cd.entries.whereType<MapEntry<String, dynamic>>().map(
-              (e) => MapEntry(e.key, e.value as String),
-            ),
-      );
+      cd.forEach((k, v) {
+        if (v is String) code[k] = v;
+      });
     } catch (_) {
       // Dữ liệu hỏng thì coi như chưa chơi — không làm app chết.
     }

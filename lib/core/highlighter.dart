@@ -150,7 +150,14 @@ List<HlSpan> highlight(String text, HighlightColors c) {
       final start = i;
       i++;
       while (i < n && text.codeUnitAt(i) != 0x27 && text.codeUnitAt(i) != 0x0A) {
-        i += (text.codeUnitAt(i) >= 0xD800 && text.codeUnitAt(i) < 0xDC00) ? 2 : 1;
+        // Cặp surrogate phải còn đủ 2 đơn vị mới nhảy 2: UTF-16 gãy (surrogate
+        // đơn nằm cuối văn bản) tiến 1 thôi, không thì i vượt quá n và
+        // substring khi dựng TextSpan ném RangeError ngay lúc gõ.
+        i += (i + 1 < n &&
+                text.codeUnitAt(i) >= 0xD800 &&
+                text.codeUnitAt(i) < 0xDC00)
+            ? 2
+            : 1;
       }
       if (i < n && text.codeUnitAt(i) == 0x27) i++;
       spans.add(HlSpan(start, i, TextStyle(color: c.string)));
@@ -189,7 +196,10 @@ List<HlSpan> highlight(String text, HighlightColors c) {
       final start = i;
       i++;
       while (i < n && _isIdentPart(text.codeUnitAt(i))) {
-        i += (text.codeUnitAt(i) >= 0xD800 && text.codeUnitAt(i) < 0xDC00)
+        // Như khối ký tự đơn ở trên: chỉ nhảy 2 khi cặp surrogate còn nguyên.
+        i += (i + 1 < n &&
+                text.codeUnitAt(i) >= 0xD800 &&
+                text.codeUnitAt(i) < 0xDC00)
             ? 2
             : 1;
       }

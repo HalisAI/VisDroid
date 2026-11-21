@@ -35,27 +35,44 @@ class PrefsStore {
 
   Future<void> set(String key, String value) async {
     _map[key] = value;
-    await _channel
-        .invokeMethod('set', {'key': 'json', 'value': jsonEncode(_map)});
+    try {
+      await _channel
+          .invokeMethod('set', {'key': 'json', 'value': jsonEncode(_map)});
+    } catch (_) {
+      // Không có platform channel (test/preview) — giữ trong RAM, không ném
+      // lỗi async ra ngoài: AppState.set… gọi mà không bắt.
+    }
   }
 
   Future<void> remove(String key) async {
     _map.remove(key);
-    await _channel
-        .invokeMethod('set', {'key': 'json', 'value': jsonEncode(_map)});
+    try {
+      await _channel
+          .invokeMethod('set', {'key': 'json', 'value': jsonEncode(_map)});
+    } catch (_) {
+      // Như set — RAM là nguồn sự thật của phiên này.
+    }
   }
 }
 
 class AppState extends ChangeNotifier {
   AppState(this._prefs) {
-    _themeMode = ThemeMode.values[_int('themeMode', 0)];
+    // Index lạ trong prefs (file hỏng / ghi từ bản app khác) phải về hệ thống,
+    // không được để ThemeMode.values[...] ném RangeError ngay lúc khởi động.
+    var ti = _int('themeMode', 0);
+    if (ti < 0 || ti >= ThemeMode.values.length) ti = 0;
+    _themeMode = ThemeMode.values[ti];
     final li = _int('lang', 0);
     _lang = li == 1 ? AppLang.english : AppLang.vietnamese;
     _useVm = _bool('useVm', false);
     _strictCaps = _bool('strictCaps', false);
     _noExtern = _bool('noExtern', false);
     _lastFile = _prefs.get('lastFile');
-    _fontSize = _double('fontSize', 15.0);
+    // Cỡ chữ hỏng/lệch slider (Cài đặt cho 10–24) không làm chữ vụt mất.
+    var fs = _double('fontSize', 15.0);
+    if (fs < 10) fs = 10;
+    if (fs > 24) fs = 24;
+    _fontSize = fs;
     _autoSave = _bool('autoSave', true);
   }
 

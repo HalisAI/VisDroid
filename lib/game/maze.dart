@@ -112,15 +112,78 @@ class MazeLevel {
   }
 }
 
+/// Kiểm tra bất biến dữ liệu màn chơi, trả về danh sách mô tả lỗi (rỗng =
+/// mọi màn đều hợp lệ).
+///
+/// [MazeLevel] là const constructor nên không thể validate lúc dựng — hàm
+/// này là chốt kiểm tra cuối (gọi trong test với [kGameLevels], hoặc khi
+/// dựng màn bằng code). Soi sâu hơn `_find`/isWall lúc chơi: grid rỗng,
+/// hàng trống, hàng lệch cột, ký tự lạ ngoài `#.SCX`, đúng một `S`/một `C`
+/// mỗi màn, và `S`/`C`/`X` không đè tường. Không ném exception — mọi vấn đề
+/// được ghi vào danh sách để test in ra tất cả cùng lúc.
+List<String> validateLevels(List<MazeLevel> levels) {
+  final problems = <String>[];
+  final seenIds = <String>{};
+  for (final lv in levels) {
+    final tag = 'màn ${lv.id}';
+    if (!seenIds.add(lv.id)) problems.add('$tag: id bị trùng');
+    if (lv.grid.isEmpty) {
+      problems.add('$tag: grid rỗng');
+      continue;
+    }
+    var countS = 0, countC = 0;
+    Cell? sCell, cCell;
+    final items = <Cell>[];
+    final width = lv.grid.first.length;
+    for (var y = 0; y < lv.grid.length; y++) {
+      final row = lv.grid[y];
+      if (row.isEmpty) {
+        problems.add('$tag: hàng $y trống');
+        continue;
+      }
+      if (row.length != width) {
+        problems.add('$tag: hàng $y lệch cột (${row.length} ≠ $width)');
+      }
+      for (var x = 0; x < row.length; x++) {
+        final ch = row[x];
+        if (ch == 'S') {
+          countS++;
+          sCell = Cell(x, y);
+        } else if (ch == 'C') {
+          countC++;
+          cCell = Cell(x, y);
+        } else if (ch == 'X') {
+          items.add(Cell(x, y));
+        } else if (ch != '#' && ch != '.') {
+          problems.add('$tag: ký tự lạ "$ch" ở ô ($x,$y)');
+        }
+      }
+    }
+    if (countS != 1) problems.add('$tag: có $countS ô S (cần đúng 1)');
+    if (countC != 1) problems.add('$tag: có $countC ô C (cần đúng 1)');
+    // Ô ký tự của chính nó không bao giờ là '#', nhưng isWall soi cả mép
+    // từng hàng — giữ kiểm tra để bắt lưới dựng bằng code lệch mép.
+    if (sCell != null && lv.isWall(sCell)) {
+      problems.add('$tag: S đè tường ở $sCell');
+    }
+    if (cCell != null && lv.isWall(cCell)) {
+      problems.add('$tag: C đè tường ở $cCell');
+    }
+    for (final c in items) {
+      if (lv.isWall(c)) problems.add('$tag: X đè tường ở $c');
+    }
+  }
+  return problems;
+}
+
 /// Lệnh robot đọc được từ stdout.
 enum CmdKind { forward, turnLeft, turnRight, pickup }
 
 class GameCmd {
-  const GameCmd(this.kind, this.n, this.stdoutLine);
+  const GameCmd(this.kind, this.n);
 
   final CmdKind kind;
   final int n; // số bước với `tien`, không dùng cho lệnh khác.
-  final int stdoutLine; // dòng trong stdout (1-based) — báo lỗi dễ hiểu.
 }
 
 /// Kết quả phân tích stdout thành hàng lệnh.
@@ -134,12 +197,19 @@ class ParseResult {
   bool get ok => error == null;
 }
 
+/// Cắt chuỗi được nhắc lại trong thông báo lỗi — dòng script 1000+ ký tự
+/// hay số `tien` 300 chữ số không được làm banner lỗi của người chơi thành
+/// một bức thư vô tận.
+String _echo(String s, [int max = 60]) =>
+    s.length <= max ? s : '${s.substring(0, max)}…';
+
 /// Phân tích stdout của script thành hàng lệnh.
 ///
 /// Quy tắc: mỗi dòng non-trống phải là một lệnh (`tien <n>` với 0 ≤ n ≤ 100,
 /// `trai`, `phai`, `nhat`); dòng trống hoặc bắt đầu bằng `#` (in debug) được bỏ
-/// qua; dòng khác ⇒ lỗi kèm vị trí để người chơi sửa. Giới hạn 500 lệnh VÀ 500
-/// bước đi (một lệnh `tien` sinh tới 100 bước) để hoạt ảnh không chạy vô hạn.
+/// qua; dòng khác ⇒ lỗi kèm vị trí để người chơi sửa. Phân biệt hoa thường là
+/// chủ ý (helper in đúng `"tien {n}"` thường). Giới hạn 500 lệnh VÀ 500 bước
+/// đi (một lệnh `tien` sinh tới 100 bước) để hoạt ảnh không chạy vô hạn.
 ParseResult parseCommands(String stdout) {
   final cmds = <GameCmd>[];
   var steps = 0; // tổng bước đi của mọi lệnh tien — cap theo BƯỚC.
@@ -155,26 +225,26 @@ ParseResult parseCommands(String stdout) {
       final n = int.tryParse(tenMatch.group(1)!);
       if (n == null || n > 100) {
         return ParseResult(const [], 'tien tối đa 100 bước mỗi lệnh '
-            '(nhận được ${tenMatch.group(1)!})', ln);
+            '(nhận được ${_echo(tenMatch.group(1)!, 24)})', ln);
       }
       steps += n;
-      cmds.add(GameCmd(CmdKind.forward, n, ln));
+      cmds.add(GameCmd(CmdKind.forward, n));
       continue;
     }
     switch (s) {
       case 'trai':
-        cmds.add(GameCmd(CmdKind.turnLeft, 0, ln));
+        cmds.add(GameCmd(CmdKind.turnLeft, 0));
         continue;
       case 'phai':
-        cmds.add(GameCmd(CmdKind.turnRight, 0, ln));
+        cmds.add(GameCmd(CmdKind.turnRight, 0));
         continue;
       case 'nhat':
-        cmds.add(GameCmd(CmdKind.pickup, 0, ln));
+        cmds.add(GameCmd(CmdKind.pickup, 0));
         continue;
     }
     return ParseResult(
       const [],
-      "không hiểu dòng: '$s' — chỉ nhận: tien <số bước>, trai, phai, nhat",
+      "không hiểu dòng: '${_echo(s)}' — chỉ nhận: tien <số bước>, trai, phai, nhat",
       ln,
     );
   }
@@ -218,24 +288,14 @@ class SimOutcome {
   const SimOutcome({
     required this.win,
     required this.frames,
-    required this.stepCount,
     this.failMsg,
     this.failStep,
   });
 
   final bool win;
   final List<SimFrame> frames; // frames[0] = trạng thái ban đầu.
-  final int stepCount; // tổng lệnh.
   final String? failMsg; // khác null khi thua.
   final int? failStep; // số thứ tự lệnh gây thua (1-based).
-
-  /// Chạy tới đây thì dừng hoạt ảnh (chỉ số frame cuối).
-  int get lastFrame => failMsg == null ? frames.length - 1 : failFrame;
-
-  int get failFrame {
-    // frames: mỗi lệnh sinh 1..n frame; fail frame là frame cuối.
-    return frames.length - 1;
-  }
 }
 
 /// Chạy mô phỏng hàng lệnh trên bản đồ — không đụng UI.
@@ -270,7 +330,6 @@ SimOutcome simulate(MazeLevel level, List<GameCmd> cmds) {
           return SimOutcome(
             win: false,
             frames: frames,
-            stepCount: cmds.length,
             failMsg: "không có đồ để nhặt ở ô $at (lệnh thứ ${i + 1})",
             failStep: i + 1,
           );
@@ -290,7 +349,6 @@ SimOutcome simulate(MazeLevel level, List<GameCmd> cmds) {
             return SimOutcome(
               win: false,
               frames: frames,
-              stepCount: cmds.length,
               failMsg: 'đâm tường ở ô $next (lệnh thứ ${i + 1})',
               failStep: i + 1,
             );
@@ -317,7 +375,6 @@ SimOutcome simulate(MazeLevel level, List<GameCmd> cmds) {
   return SimOutcome(
     win: win,
     frames: frames,
-    stepCount: cmds.length,
     failMsg: failMsg,
     failStep: failStep,
   );

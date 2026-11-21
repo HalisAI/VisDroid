@@ -7,6 +7,9 @@
 /// với `par` khai báo trong levels.dart.
 library;
 
+import 'dart:convert';
+
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:visdroid/core/settings.dart';
 import 'package:visdroid/game/levels.dart';
@@ -83,6 +86,39 @@ void main() {
       expect(pr.ok, isFalse);
       expect(pr.error, contains('tổng số bước đi quá 500'));
     });
+
+    test('thừa tab/khoảng trắng quanh lệnh vẫn đọc được', () {
+      final pr = parseCommands('tien 5\t\n  phai  \n');
+      expect(pr.ok, isTrue);
+      expect(pr.cmds.map((c) => c.kind).toList(),
+          [CmdKind.forward, CmdKind.turnRight]);
+    });
+
+    test('phân biệt hoa thường là chủ ý: TIEN là dòng lạ', () {
+      // Helper in đúng "tien {n}" thường (scripts/game-snippets) — chữ hoa
+      // không phải giao thức robot, báo lỗi cho người chơi sửa.
+      final pr = parseCommands('TIEN 5\n');
+      expect(pr.ok, isFalse);
+      expect(pr.error, contains('TIEN 5'));
+    });
+
+    test("'tien 5.0' → lỗi dòng 1 (chỉ nhận số nguyên)", () {
+      final pr = parseCommands('tien 5.0\n');
+      expect(pr.ok, isFalse);
+      expect(pr.errorLine, 1);
+    });
+
+    test('dòng lạ >1000 ký tự → lỗi nhưng echo bị cắt, không phình banner', () {
+      final pr = parseCommands('${'x' * 1200}\n');
+      expect(pr.ok, isFalse);
+      expect(pr.error!.length, lessThan(200));
+    });
+
+    test('số quá lớn trong lỗi cũng bị cắt bớt', () {
+      final pr = parseCommands('tien ${'9' * 300}\n');
+      expect(pr.ok, isFalse);
+      expect(pr.error!.length, lessThan(200));
+    });
   });
 
   group('khai báo màn chơi', () {
@@ -115,6 +151,60 @@ void main() {
         expect(lv.par, greaterThan(0));
         expect(lv.starterCode, contains('fn di_tien'));
       }
+    });
+
+    test('validateLevels: toàn bộ kGameLevels hợp lệ, không lỗi dữ liệu', () {
+      // Helper soi sâu trong maze.dart (grid rỗng/hàng trống/lệch cột/ký tự
+      // lạ/S-C trùng hay thiếu/S-C-X đè tường) — rỗng nghĩa là mọi màn sạch.
+      expect(validateLevels(kGameLevels), isEmpty);
+    });
+  });
+
+  group('validateLevels — bắt dữ liệu màn hỏng', () {
+    MazeLevel mk(List<String> grid) => MazeLevel(
+          id: 'test-mk',
+          world: 1,
+          title: '',
+          task: '',
+          grid: grid,
+          startFacing: Facing.east,
+          starterCode: '',
+          hint: '',
+          par: 1,
+        );
+
+    test('grid rỗng → báo lỗi, không ném "Bad state: No element"', () {
+      expect(validateLevels([mk(const [])]), isNotEmpty);
+    });
+
+    test('hàng trống → báo lỗi', () {
+      final p = validateLevels([mk(['####', '', '####'])]);
+      expect(p.join(' | '), contains('trống'));
+    });
+
+    test('hàng lệch cột → báo lỗi', () {
+      final p = validateLevels([mk(['####', '#S#'])]);
+      expect(p.join(' | '), contains('lệch cột'));
+    });
+
+    test('ký tự lạ ngoài #.SCX → báo lỗi', () {
+      final p = validateLevels([mk(['####', '#S?C#', '####'])]);
+      expect(p.join(' | '), contains('ký tự lạ'));
+    });
+
+    test('thiếu S / thiếu C → báo lỗi thay vì StateError khi truy cập start', () {
+      final p = validateLevels([mk(['####', '#..#', '####'])]);
+      expect(p.join(' | '), contains('ô S'));
+      expect(p.join(' | '), contains('ô C'));
+    });
+
+    test('hai ô S → báo lỗi', () {
+      final p = validateLevels([mk(['####', '#SS#', '####'])]);
+      expect(p.join(' | '), contains('2 ô S'));
+    });
+
+    test('lưới chuẩn 1 S 1 C → không lỗi', () {
+      expect(validateLevels([mk(['####', '#SC#', '####'])]), isEmpty);
     });
   });
 
@@ -175,6 +265,45 @@ void main() {
         expect(lv.par <= lv.par, isTrue);
       });
     }
+  });
+
+  group('simulate — biên chạy', () {
+    // Màn giả lập có hành lang đi LỐI qua cờ: C ở (3,1), sàn (4,1), tường (5,1).
+    final lvQuaCo = MazeLevel(
+      id: 'test-qua-co',
+      world: 1,
+      title: 'test',
+      task: 'test',
+      grid: ['######', '#S.C.#', '######'],
+      startFacing: Facing.east,
+      starterCode: '',
+      hint: '',
+      par: 3,
+    );
+
+    test('tien 0: parse hợp lệ, không sinh bước — kết thúc ở S nên thua rõ ràng', () {
+      final pr = parseCommands('tien 0\n');
+      expect(pr.ok, isTrue);
+      final oc = simulate(_level('1'), pr.cmds);
+      expect(oc.frames.length, 1); // chỉ còn frame ban đầu, không frame di chuyển.
+      expect(oc.win, isFalse);
+      expect(oc.failMsg, contains('cờ'));
+    });
+
+    test('đi LỐI qua cờ rồi dừng sau nó → thua, thông điệp dạy đúng chỗ dừng', () {
+      // S ở (1,1), cờ ở (3,1): tien 3 đi QUA cờ, dừng ở (4,1).
+      final pr = parseCommands('tien 3\n');
+      final oc = simulate(lvQuaCo, pr.cmds);
+      expect(oc.win, isFalse);
+      expect(oc.failMsg, contains('NGAY trên ô cờ'));
+      expect(oc.frames.last.at, const Cell(4, 1));
+    });
+
+    test('dừng đúng ô cờ (không có đồ để nhặt) → thắng', () {
+      final pr = parseCommands('tien 2\n');
+      final oc = simulate(lvQuaCo, pr.cmds);
+      expect(oc.win, isTrue, reason: oc.failMsg);
+    });
   });
 
   group('simulate — thất bại có dạy học', () {
@@ -300,6 +429,34 @@ void main() {
       expect(p.allDone, isTrue);
       expect(p.totalStars, kGameLevels.length * 3);
       expect(p.totalStars, p.maxStars);
+    });
+
+    testWidgets('file lưu lẫn kiểu lạ: mục sai kiểu bị bỏ, phần lành vẫn giữ', (tester) async {
+      const ch = MethodChannel('visdroid/prefs');
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(ch, (m) async {
+        if (m.method != 'get') return null;
+        return jsonEncode({
+          'game_progress_v2': jsonEncode({
+            'stars': {'1': 3, '2': 'ba', '3': 99, '4': -2},
+            'best': {'1': 5, '2': [1]},
+            'code': {'1': 'ok', '2': 42},
+          }),
+        });
+      });
+      addTearDown(() => TestDefaultBinaryMessengerBinding.instance
+          .defaultBinaryMessenger
+          .setMockMethodCallHandler(ch, null));
+      final p = await fresh();
+      expect(p.starsOf(kGameLevels[0]), 3); // mục lành giữ nguyên
+      expect(p.starsOf(kGameLevels[1]), 0); // 'ba' sai kiểu → bỏ, không xoá sạch
+      expect(p.starsOf(kGameLevels[2]), 3); // 99 → kẹp trong 0..3
+      expect(p.starsOf(kGameLevels[3]), 0); // âm → 0
+      expect(p.totalStars, p.maxStars - (kGameLevels.length - 2) * 3);
+      expect(p.bestOf(kGameLevels[0]), 5);
+      expect(p.bestOf(kGameLevels[1]), isNull); // list → bỏ
+      expect(p.codeOf(kGameLevels[0]), 'ok');
+      expect(p.codeOf(kGameLevels[1]), kGameLevels[1].starterCode); // 42 → bỏ
     });
   });
 }
