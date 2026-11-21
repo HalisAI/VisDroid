@@ -58,6 +58,9 @@ class EditorScreenState extends State<EditorScreen> {
   bool _dirty = false;
   List<String> _args = const [];
 
+  /// Đang gán text bằng code (mở tệp) — không tính là người dùng sửa.
+  bool _silentAssign = false;
+
   /// Chấm đỏ gutter: dòng 0-based → mã lỗi, từ lần chạy/kiểm tra gần nhất.
   Map<int, String> _markers = const {};
 
@@ -102,8 +105,16 @@ class EditorScreenState extends State<EditorScreen> {
       _fileName = name;
       _dirty = false;
       _markers = const {};
-      _controller = CodeController(text: text, colors: _colors);
+      // Tái dùng controller thay vì tạo instance mới: thay controller làm
+      // CodeField mất listener _onChanged (mất dirty/auto-save/chấm đỏ)
+      // và controller cũ không bao giờ được dispose (leak).
+      _silentAssign = true;
+      _controller!
+        ..text = text
+        ..selection = TextSelection.collapsed(offset: 0);
+      _silentAssign = false;
     });
+    _refreshFind();
     widget.onFileOpened(name);
   }
 
@@ -152,7 +163,12 @@ class EditorScreenState extends State<EditorScreen> {
       _fileName = null;
       _dirty = false;
       _markers = const {};
-      _controller = CodeController(text: '', colors: _colors);
+      // Tái dùng controller như openFile — giữ listener của CodeField.
+      _silentAssign = true;
+      _controller!
+        ..text = ''
+        ..selection = TextSelection.collapsed(offset: 0);
+      _silentAssign = false;
     });
     widget.onFileOpened(null);
   }
@@ -455,6 +471,9 @@ class EditorScreenState extends State<EditorScreen> {
   }
 
   void _scheduleDirty() {
+    // Gán text bằng code (mở tệp/xoá tệp) cũng báo listener — bỏ qua,
+    // không đánh dấu dirty cũng không hẹn giờ tự lưu.
+    if (_silentAssign) return;
     _debounce?.cancel();
     _debounce = Timer(const Duration(milliseconds: 250), () {
       if (!mounted) return;
