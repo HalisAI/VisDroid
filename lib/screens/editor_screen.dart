@@ -109,9 +109,10 @@ class EditorScreenState extends State<EditorScreen> {
       // CodeField mất listener _onChanged (mất dirty/auto-save/chấm đỏ)
       // và controller cũ không bao giờ được dispose (leak).
       _silentAssign = true;
-      _controller!
-        ..text = text
-        ..selection = TextSelection.collapsed(offset: 0);
+      // Gán value với selection rỗng trước (listener của CodeField bỏ qua
+      // auto-indent khi selection không hợp lệ), rồi mới đặt con trỏ đầu tệp.
+      _controller!.value = TextEditingValue(text: text);
+      _controller!.selection = TextSelection.collapsed(offset: 0);
       _silentAssign = false;
     });
     _refreshFind();
@@ -165,9 +166,8 @@ class EditorScreenState extends State<EditorScreen> {
       _markers = const {};
       // Tái dùng controller như openFile — giữ listener của CodeField.
       _silentAssign = true;
-      _controller!
-        ..text = ''
-        ..selection = TextSelection.collapsed(offset: 0);
+      _controller!.value = TextEditingValue(text: '');
+      _controller!.selection = TextSelection.collapsed(offset: 0);
       _silentAssign = false;
     });
     widget.onFileOpened(null);
