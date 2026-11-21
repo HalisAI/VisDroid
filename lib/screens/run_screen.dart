@@ -60,6 +60,9 @@ class RunScreen extends StatefulWidget {
 }
 
 class _RunScreenState extends State<RunScreen> {
+  /// stdout rất lớn làm SelectableText khựng/treo UI — chỉ vẽ phần đuôi.
+  static const int _maxDisplayChars = 20000;
+
   bool _running = false;
   String _output = '';
   List<Diag> _diags = const [];
@@ -340,6 +343,13 @@ class _RunScreenState extends State<RunScreen> {
   Widget _outputBox(ColorScheme cs) {
     final hasError = _errorText != null;
     final text = hasError ? _errorText! : _output;
+    // Chỉ hiển thị phần đuôi khi stdout quá lớn; nút copy trên AppBar vẫn
+    // copy đủ nội dung gốc (_output không bị cắt).
+    var shown = text;
+    if (shown.length > _maxDisplayChars) {
+      shown = '${t(context, S.outputTruncated)}\n'
+          '${shown.substring(shown.length - _maxDisplayChars)}';
+    }
     final empty = text.trim().isEmpty && _diags.isEmpty;
     return Container(
       width: double.infinity,
@@ -366,7 +376,7 @@ class _RunScreenState extends State<RunScreen> {
               ),
             )
           : SelectableText(
-              text,
+              shown,
               style: TextStyle(
                 fontFamily: 'monospace',
                 fontSize: widget.fontSize,
